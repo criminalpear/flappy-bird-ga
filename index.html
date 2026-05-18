@@ -299,8 +299,8 @@ function gameLoop() {
 
     // Spawn pipes
     if (fc === 1) {
-      // First pipe: close to bird, gap centered on bird's starting position
-      pipes.push(new Pipe(CW*0.25, CH*0.3+PR, gapSize));
+      // First pipe: give birds more time to react
+      pipes.push(new Pipe(CW*0.6, CH*0.3+PR, gapSize));
       pipes[0]._speed = pipeSpeed;
     } else if ((fc-1) % spawnInt === 0) {
       const gapY = 70 + Math.random() * (CH - gapSize - 140);
