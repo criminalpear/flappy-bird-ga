@@ -1,0 +1,789 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Flappy Bird - Genetic Algorithm Trainer</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #1a1a2e; color: #eee; font-family: 'Segoe UI', monospace; display: flex; flex-direction: column; align-items: center; padding: 10px; min-height: 100vh; }
+h1 { font-size: 18px; margin-bottom: 6px; color: #f0e68c; }
+#layout { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+canvas { border: 2px solid #444; border-radius: 4px; image-rendering: pixelated; }
+#panel { width: 280px; font-size: 12px; }
+#panel h3 { color: #7fff7f; margin: 8px 0 4px; font-size: 13px; }
+#stats { background: #16213e; padding: 8px; border-radius: 4px; line-height: 1.6; }
+#stats span { color: #ffd700; }
+#controls { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0; }
+button { background: #0f3460; color: #eee; border: 1px solid #444; padding: 5px 10px; border-radius: 3px; cursor: pointer; font-size: 11px; }
+button:hover { background: #1a5276; }
+button.active { background: #27ae60; }
+#brainInfo { background: #16213e; padding: 8px; border-radius: 4px; margin-top: 6px; max-height: 200px; overflow-y: auto; font-size: 11px; }
+#brainInfo pre { white-space: pre-wrap; word-break: break-all; }
+#fitnessGraph { background: #16213e; border-radius: 4px; margin-top: 6px; }
+#log { background: #0d1117; padding: 6px; border-radius: 4px; margin-top: 6px; max-height: 120px; overflow-y: auto; font-size: 10px; color: #888; }
+#log .good { color: #7fff7f; }
+#log .bad { color: #ff6b6b; }
+#log .info { color: #7fbfff; }
+</style>
+</head>
+<body>
+<h1>🐦 Flappy Bird — Genetic Algorithm Trainer</h1>
+<div id="layout">
+  <canvas id="gameCanvas" width="400" height="600"></canvas>
+  <div id="panel">
+    <div id="controls">
+      <button id="btnStart" onclick="toggleTraining()">▶ Start</button>
+      <button id="btnSpeed" onclick="cycleSpeed()">Speed: 1x</button>
+      <button onclick="saveBestBrain()">💾 Save Brain</button>
+      <button onclick="loadBrainPrompt()">📂 Load Brain</button>
+      <button onclick="resetTraining()">🔄 Reset</button>
+      <button onclick="exportBrainJSON()">📋 Export JSON</button>
+    </div>
+    <h3>📊 Statistics</h3>
+    <div id="stats">
+      Generation: <span id="gen">0</span><br>
+      Alive: <span id="alive">0</span> / <span id="pop">0</span><br>
+      Best Fitness: <span id="bestFit">0</span><br>
+      Best Score: <span id="bestScore">0</span><br>
+      Avg Fitness: <span id="avgFit">0</span><br>
+      Mutation Rate: <span id="mutRate">10%</span><br>
+      Speed: <span id="speedDisp">1x</span>
+    </div>
+    <h3>📈 Fitness History</h3>
+    <canvas id="fitnessGraph" width="280" height="100"></canvas>
+    <h3>🧠 Best Brain Weights</h3>
+    <div id="brainInfo"><em>Train to see brain data...</em></div>
+    <h3>📜 Log</h3>
+    <div id="log"></div>
+  </div>
+</div>
+
+<!-- Hidden file input for loading brains -->
+<input type="file" id="fileInput" accept=".json" style="display:none" onchange="handleFileLoad(event)">
+
+<script>
+// ══════════════════════════════════════════════
+//  NEURAL NETWORK (simple feedforward)
+// ══════════════════════════════════════════════
+class NeuralNetwork {
+  constructor(inputSize, hiddenSize, outputSize) {
+    this.inputSize = inputSize;
+    this.hiddenSize = hiddenSize;
+    this.outputSize = outputSize;
+    this.weightsIH = this.randomMatrix(hiddenSize, inputSize);
+    this.weightsHO = this.randomMatrix(outputSize, hiddenSize);
+    this.biasH = new Array(hiddenSize).fill(0).map(() => (Math.random() - 0.5) * 0.1);
+    this.biasO = new Array(outputSize).fill(0).map(() => (Math.random() - 0.5) * 0.1);
+  }
+
+  randomMatrix(rows, cols) {
+    return Array.from({ length: rows }, () =>
+      Array.from({ length: cols }, () => (Math.random() - 0.5) * 2)
+    );
+  }
+
+  relu(x) { return Math.max(0, x); }
+  sigmoid(x) { return 1 / (1 + Math.exp(-Math.max(-20, Math.min(20, x)))); }
+
+  forward(inputs) {
+    // Hidden layer
+    this.hidden = new Array(this.hiddenSize);
+    for (let h = 0; h < this.hiddenSize; h++) {
+      let sum = this.biasH[h];
+      for (let i = 0; i < this.inputSize; i++) {
+        sum += inputs[i] * this.weightsIH[h][i];
+      }
+      this.hidden[h] = this.relu(sum);
+    }
+    // Output layer
+    this.output = new Array(this.outputSize);
+    for (let o = 0; o < this.outputSize; o++) {
+      let sum = this.biasO[o];
+      for (let h = 0; h < this.hiddenSize; h++) {
+        sum += this.hidden[h] * this.weightsHO[o][h];
+      }
+      this.output[o] = this.sigmoid(sum);
+    }
+    return this.output;
+  }
+
+  // Flatten all weights/biases into a single array
+  serialize() {
+    const data = [];
+    for (let row of this.weightsIH) data.push(...row);
+    for (let row of this.weightsHO) data.push(...row);
+    data.push(...this.biasH);
+    data.push(...this.biasO);
+    return data;
+  }
+
+  // Load from flat array
+  static deserialize(arr, inputSize, hiddenSize, outputSize) {
+    const nn = new NeuralNetwork(0, 0, 0);
+    nn.inputSize = inputSize;
+    nn.hiddenSize = hiddenSize;
+    nn.outputSize = outputSize;
+    let idx = 0;
+    nn.weightsIH = [];
+    for (let h = 0; h < hiddenSize; h++) {
+      nn.weightsIH[h] = arr.slice(idx, idx + inputSize);
+      idx += inputSize;
+    }
+    nn.weightsHO = [];
+    for (let o = 0; o < outputSize; o++) {
+      nn.weightsHO[o] = arr.slice(idx, idx + hiddenSize);
+      idx += hiddenSize;
+    }
+    nn.biasH = arr.slice(idx, idx + hiddenSize);
+    idx += hiddenSize;
+    nn.biasO = arr.slice(idx, idx + outputSize);
+    return nn;
+  }
+
+  clone() {
+    return NeuralNetwork.deserialize(this.serialize(), this.inputSize, this.hiddenSize, this.outputSize);
+  }
+
+  mutate(rate) {
+    const data = this.serialize();
+    for (let i = 0; i < data.length; i++) {
+      if (Math.random() < rate) {
+        data[i] += (Math.random() - 0.5) * 0.5;
+      }
+    }
+    return NeuralNetwork.deserialize(data, this.inputSize, this.hiddenSize, this.outputSize);
+  }
+
+  static crossover(a, b) {
+    const dataA = a.serialize();
+    const dataB = b.serialize();
+    const child = [];
+    for (let i = 0; i < dataA.length; i++) {
+      child.push(Math.random() < 0.5 ? dataA[i] : dataB[i]);
+    }
+    return NeuralNetwork.deserialize(child, a.inputSize, a.hiddenSize, a.outputSize);
+  }
+}
+
+// ══════════════════════════════════════════════
+//  GAME CONSTANTS
+// ══════════════════════════════════════════════
+const CANVAS_W = 400, CANVAS_H = 600;
+const GRAVITY = 0.45;
+const FLAP_VEL = -7.5;
+const PIPE_W = 60;
+const PIPE_GAP = 150;
+const PIPE_SPEED = 3;
+const PIPE_SPAWN_INTERVAL = 90; // frames
+const BIRD_SIZE = 24;
+const BIRD_X = 80;
+
+// ══════════════════════════════════════════════
+//  BIRD CLASS
+// ══════════════════════════════════════════════
+class Bird {
+  constructor(brain) {
+    this.y = CANVAS_H / 2;
+    this.vel = 0;
+    this.alive = true;
+    this.score = 0;
+    this.fitness = 0;
+    this.passedPipes = 0;
+    this.framesAlive = 0;
+    this.brain = brain || new NeuralNetwork(5, 8, 1);
+    this.deathReason = '';
+  }
+
+  reset() {
+    this.y = CANVAS_H / 2;
+    this.vel = 0;
+    this.alive = true;
+    this.score = 0;
+    this.fitness = 0;
+    this.passedPipes = 0;
+    this.framesAlive = 0;
+    this.deathReason = '';
+  }
+
+  // Inputs: normalized y, velocity, distance to next pipe, top of gap, bottom of gap
+  think(pipes) {
+    if (!pipes.length) return;
+    // Find next pipe ahead of bird
+    let nextPipe = pipes.find(p => p.x + PIPE_W > BIRD_X);
+    if (!nextPipe) nextPipe = pipes[0];
+
+    const inputs = [
+      this.y / CANVAS_H,
+      this.vel / 10,
+      (nextPipe.x - BIRD_X) / CANVAS_W,
+      nextPipe.gapTop / CANVAS_H,
+      (nextPipe.gapTop + PIPE_GAP) / CANVAS_H
+    ];
+
+    const output = this.brain.forward(inputs);
+    if (output[0] > 0.5) this.flap();
+  }
+
+  flap() { this.vel = FLAP_VEL; }
+
+  update(pipes) {
+    if (!this.alive) return;
+    this.framesAlive++;
+    this.vel += GRAVITY;
+    this.y += this.vel;
+
+    // Check pipe passing
+    for (let p of pipes) {
+      if (!p.passed && p.x + PIPE_W < BIRD_X) {
+        p.passed = true;
+        this.score++;
+        this.passedPipes++;
+      }
+    }
+
+    // Collision: ceiling/floor
+    if (this.y < 0) {
+      this.y = 0;
+      this.die('ceiling');
+      return;
+    }
+    if (this.y + BIRD_SIZE > CANVAS_H) {
+      this.die('ground');
+      return;
+    }
+
+    // Collision: pipes
+    for (let p of pipes) {
+      if (this.collidesWith(p)) {
+        this.die('pipe');
+        return;
+      }
+    }
+
+    // ═══ FITNESS / REWARD SYSTEM ═══
+    // Small reward for staying alive (encourages survival)
+    this.fitness += 0.1;
+    // Big reward for passing pipes
+    this.fitness += this.passedPipes * 50;
+    // Penalty for being far from gap center (encourages centering)
+    if (pipes.length) {
+      let nextPipe = pipes.find(p => p.x + PIPE_W > BIRD_X);
+      if (nextPipe) {
+        const gapCenter = nextPipe.gapTop + PIPE_GAP / 2;
+        const birdCenter = this.y + BIRD_SIZE / 2;
+        const dist = Math.abs(birdCenter - gapCenter) / CANVAS_H;
+        this.fitness -= dist * 0.05; // small penalty for being off-center
+      }
+    }
+  }
+
+  collidesWith(pipe) {
+    const birdRight = BIRD_X + BIRD_SIZE;
+    const birdBottom = this.y + BIRD_SIZE;
+    // Bird hitbox (slightly smaller for fairness)
+    const margin = 4;
+    if (BIRD_X + margin < pipe.x + PIPE_W && birdRight - margin > pipe.x) {
+      if (this.y + margin < pipe.gapTop || birdBottom - margin > pipe.gapTop + PIPE_GAP) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  die(reason) {
+    this.alive = false;
+    this.deathReason = reason;
+    // ═══ DEATH PENALTIES ═══
+    if (reason === 'ceiling') this.fitness -= 10; // punish ceiling hits
+    if (reason === 'ground') this.fitness -= 5;
+    // Ensure fitness doesn't go too negative
+    this.fitness = Math.max(this.fitness, 1);
+  }
+
+  draw(ctx) {
+    ctx.save();
+    // Bird body
+    const cx = BIRD_X + BIRD_SIZE / 2;
+    const cy = this.y + BIRD_SIZE / 2;
+    // Tilt based on velocity
+    const angle = Math.max(-0.5, Math.min(0.8, this.vel * 0.08));
+    ctx.translate(cx, cy);
+    ctx.rotate(angle);
+
+    // Body
+    ctx.fillStyle = this.alive ? '#f0e68c' : '#888';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, BIRD_SIZE / 2, BIRD_SIZE / 2.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Eye
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(5, -3, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#000';
+    ctx.beginPath();
+    ctx.arc(6, -3, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Beak
+    ctx.fillStyle = '#ff6b35';
+    ctx.beginPath();
+    ctx.moveTo(10, 0);
+    ctx.lineTo(18, 2);
+    ctx.lineTo(10, 5);
+    ctx.closePath();
+    ctx.fill();
+
+    // Wing
+    ctx.fillStyle = '#daa520';
+    ctx.beginPath();
+    ctx.ellipse(-2, 3, 7, 4, -0.3, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+}
+
+// ══════════════════════════════════════════════
+//  PIPE CLASS
+// ══════════════════════════════════════════════
+class Pipe {
+  constructor(x) {
+    this.x = x;
+    this.gapTop = 60 + Math.random() * (CANVAS_H - PIPE_GAP - 160);
+    this.passed = false;
+  }
+
+  update() { this.x -= PIPE_SPEED; }
+
+  draw(ctx) {
+    // Top pipe
+    const grad1 = ctx.createLinearGradient(this.x, 0, this.x + PIPE_W, 0);
+    grad1.addColorStop(0, '#2ecc71');
+    grad1.addColorStop(0.5, '#27ae60');
+    grad1.addColorStop(1, '#1e8449');
+    ctx.fillStyle = grad1;
+    ctx.fillRect(this.x, 0, PIPE_W, this.gapTop);
+
+    // Top pipe cap
+    ctx.fillStyle = '#1e8449';
+    ctx.fillRect(this.x - 4, this.gapTop - 20, PIPE_W + 8, 20);
+
+    // Bottom pipe
+    const gapBottom = this.gapTop + PIPE_GAP;
+    ctx.fillStyle = grad1;
+    ctx.fillRect(this.x, gapBottom, PIPE_W, CANVAS_H - gapBottom);
+
+    // Bottom pipe cap
+    ctx.fillStyle = '#1e8449';
+    ctx.fillRect(this.x - 4, gapBottom, PIPE_W + 8, 20);
+
+    // Highlights
+    ctx.fillStyle = 'rgba(255,255,255,0.1)';
+    ctx.fillRect(this.x + 4, 0, 8, this.gapTop - 20);
+    ctx.fillRect(this.x + 4, gapBottom + 20, 8, CANVAS_H - gapBottom - 20);
+  }
+}
+
+// ══════════════════════════════════════════════
+//  GENETIC ALGORITHM
+// ══════════════════════════════════════════════
+const POP_SIZE = 60;
+const MUTATION_RATE = 0.12;
+const ELITISM = 4;
+
+let birds = [];
+let pipes = [];
+let frameCount = 0;
+let generation = 0;
+let bestFitness = 0;
+let bestScore = 0;
+let bestBrain = null;
+let fitnessHistory = [];
+let training = false;
+let speedMultiplier = 1;
+let speedOptions = [1, 2, 5, 10, 50];
+let speedIdx = 0;
+
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const graphCanvas = document.getElementById('fitnessGraph');
+const gCtx = graphCanvas.getContext('2d');
+
+function init() {
+  birds = [];
+  for (let i = 0; i < POP_SIZE; i++) {
+    birds.push(new Bird());
+  }
+  pipes = [];
+  frameCount = 0;
+  generation = 0;
+  bestFitness = 0;
+  bestScore = 0;
+  bestBrain = null;
+  fitnessHistory = [];
+  log('Initialized population of ' + POP_SIZE, 'info');
+}
+
+function nextGeneration() {
+  generation++;
+
+  // Calculate fitness for all birds
+  for (let b of birds) {
+    if (b.alive) {
+      b.fitness = Math.max(b.fitness, 1);
+    }
+  }
+
+  // Sort by fitness descending
+  birds.sort((a, b) => b.fitness - a.fitness);
+
+  const genBest = birds[0];
+  const avgFit = birds.reduce((s, b) => s + b.fitness, 0) / birds.length;
+
+  if (genBest.fitness > bestFitness) {
+    bestFitness = genBest.fitness;
+    bestBrain = genBest.brain.clone();
+    log(`Gen ${generation}: New best fitness = ${bestFitness.toFixed(1)} (score: ${genBest.score})`, 'good');
+  }
+  if (genBest.score > bestScore) {
+    bestScore = genBest.score;
+  }
+
+  fitnessHistory.push({ gen: generation, best: genBest.fitness, avg: avgFit });
+  if (fitnessHistory.length > 200) fitnessHistory.shift();
+
+  // ═══ SELECTION: Tournament selection ═══
+  const newBirds = [];
+
+  // Elitism: keep top N unchanged
+  for (let i = 0; i < ELITISM; i++) {
+    const elite = new Birds[i] = new Bird(birds[i].brain.clone());
+    newBirds.push(elite);
+  }
+
+  // Fill rest with crossover + mutation
+  while (newBirds.length < POP_SIZE) {
+    const parentA = tournamentSelect();
+    const parentB = tournamentSelect();
+    const childBrain = NeuralNetwork.crossover(parentA.brain, parentB.brain);
+    childBrain.mutate(MUTATION_RATE);
+    newBirds.push(new Bird(childBrain));
+  }
+
+  birds = newBirds;
+  pipes = [];
+  frameCount = 0;
+
+  // Adaptive mutation: decrease if we're improving
+  if (generation > 5 && fitnessHistory.length > 5) {
+    const recent = fitnessHistory.slice(-5);
+    const improving = recent[recent.length - 1].best > recent[0].best;
+    if (!improving) {
+      // Stuck — increase diversity
+      log('Stuck! Increasing mutation pressure...', 'info');
+    }
+  }
+
+  updateStats();
+  drawFitnessGraph();
+  updateBrainInfo();
+}
+
+function tournamentSelect(k = 5) {
+  let best = null;
+  for (let i = 0; i < k; i++) {
+    const candidate = birds[Math.floor(Math.random() * birds.length)];
+    if (!best || candidate.fitness > best.fitness) best = candidate;
+  }
+  return best;
+}
+
+// ══════════════════════════════════════════════
+//  GAME LOOP
+// ══════════════════════════════════════════════
+function gameLoop() {
+  if (!training) {
+    requestAnimationFrame(gameLoop);
+    return;
+  }
+
+  for (let s = 0; s < speedMultiplier; s++) {
+    // Spawn pipes
+    frameCount++;
+    if (frameCount % PIPE_SPAWN_INTERVAL === 0) {
+      pipes.push(new Pipe(CANVAS_W + 10));
+    }
+
+    // Update pipes
+    for (let p of pipes) p.update();
+    pipes = pipes.filter(p => p.x + PIPE_W > -10);
+
+    // Update birds
+    let aliveCount = 0;
+    for (let bird of birds) {
+      if (bird.alive) {
+        bird.think(pipes);
+        bird.update(pipes);
+        if (bird.alive) aliveCount++;
+      }
+    }
+
+    // Check if all dead
+    if (aliveCount === 0) {
+      nextGeneration();
+    }
+  }
+
+  // ═══ RENDER ═══
+  // Sky gradient
+  const sky = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
+  sky.addColorStop(0, '#4dc9f6');
+  sky.addColorStop(1, '#87ceeb');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+  // Ground
+  ctx.fillStyle = '#8B4513';
+  ctx.fillRect(0, CANVAS_H - 30, CANVAS_W, 30);
+  ctx.fillStyle = '#228B22';
+  ctx.fillRect(0, CANVAS_H - 35, CANVAS_W, 10);
+
+  // Draw pipes
+  for (let p of pipes) p.draw(ctx);
+
+  // Draw birds (only draw alive ones, or all with transparency)
+  for (let bird of birds) {
+    if (bird.alive) {
+      ctx.globalAlpha = 0.7;
+      bird.draw(ctx);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // Highlight best alive bird
+  let bestAlive = birds.find(b => b.alive);
+  if (bestAlive) {
+    ctx.strokeStyle = '#ffd700';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(BIRD_X - 2, bestAlive.y - 2, BIRD_SIZE + 4, BIRD_SIZE + 4);
+  }
+
+  // HUD
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(0, 0, CANVAS_W, 28);
+  ctx.fillStyle = '#fff';
+  ctx.font = '12px monospace';
+  ctx.fillText(`Gen: ${generation} | Alive: ${birds.filter(b => b.alive).length}/${POP_SIZE} | Best: ${bestScore}`, 8, 18);
+
+  updateStats();
+  requestAnimationFrame(gameLoop);
+}
+
+// ══════════════════════════════════════════════
+//  UI FUNCTIONS
+// ══════════════════════════════════════════════
+function toggleTraining() {
+  training = !training;
+  document.getElementById('btnStart').textContent = training ? '⏸ Pause' : '▶ Start';
+  document.getElementById('btnStart').classList.toggle('active', training);
+  if (birds.length === 0) init();
+}
+
+function cycleSpeed() {
+  speedIdx = (speedIdx + 1) % speedOptions.length;
+  speedMultiplier = speedOptions[speedIdx];
+  document.getElementById('btnSpeed').textContent = `Speed: ${speedMultiplier}x`;
+  document.getElementById('speedDisp').textContent = `${speedMultiplier}x`;
+}
+
+function resetTraining() {
+  training = false;
+  document.getElementById('btnStart').textContent = '▶ Start';
+  document.getElementById('btnStart').classList.remove('active');
+  init();
+  log('Training reset!', 'info');
+}
+
+function updateStats() {
+  document.getElementById('gen').textContent = generation;
+  document.getElementById('alive').textContent = birds.filter(b => b.alive).length;
+  document.getElementById('pop').textContent = POP_SIZE;
+  document.getElementById('bestFit').textContent = bestFitness.toFixed(1);
+  document.getElementById('bestScore').textContent = bestScore;
+  const avg = birds.length ? birds.reduce((s, b) => s + b.fitness, 0) / birds.length : 0;
+  document.getElementById('avgFit').textContent = avg.toFixed(1);
+  document.getElementById('mutRate').textContent = (MUTATION_RATE * 100).toFixed(0) + '%';
+}
+
+function drawFitnessGraph() {
+  const w = 280, h = 100;
+  gCtx.fillStyle = '#16213e';
+  gCtx.fillRect(0, 0, w, h);
+
+  if (fitnessHistory.length < 2) return;
+
+  const maxFit = Math.max(...fitnessHistory.map(f => f.best), 1);
+  const minFit = Math.min(...fitnessHistory.map(f => f.avg), 0);
+  const range = maxFit - minFit || 1;
+
+  const toX = i => (i / (fitnessHistory.length - 1)) * w;
+  const toY = v => h - ((v - minFit) / range) * (h - 10) - 5;
+
+  // Grid lines
+  gCtx.strokeStyle = '#333';
+  gCtx.lineWidth = 0.5;
+  for (let i = 0; i < 5; i++) {
+    const y = (i / 4) * (h - 10) + 5;
+    gCtx.beginPath();
+    gCtx.moveTo(0, y);
+    gCtx.lineTo(w, y);
+    gCtx.stroke();
+  }
+
+  // Best fitness line
+  gCtx.strokeStyle = '#7fff7f';
+  gCtx.lineWidth = 1.5;
+  gCtx.beginPath();
+  for (let i = 0; i < fitnessHistory.length; i++) {
+    const x = toX(i), y = toY(fitnessHistory[i].best);
+    i === 0 ? gCtx.moveTo(x, y) : gCtx.lineTo(x, y);
+  }
+  gCtx.stroke();
+
+  // Average fitness line
+  gCtx.strokeStyle = '#7fbfff';
+  gCtx.lineWidth = 1;
+  gCtx.beginPath();
+  for (let i = 0; i < fitnessHistory.length; i++) {
+    const x = toX(i), y = toY(fitnessHistory[i].avg);
+    i === 0 ? gCtx.moveTo(x, y) : gCtx.lineTo(x, y);
+  }
+  gCtx.stroke();
+
+  // Legend
+  gCtx.fillStyle = '#7fff7f';
+  gCtx.fillRect(4, 4, 8, 3);
+  gCtx.fillStyle = '#aaa';
+  gCtx.font = '9px monospace';
+  gCtx.fillText('best', 16, 8);
+  gCtx.fillStyle = '#7fbfff';
+  gCtx.fillRect(50, 4, 8, 3);
+  gCtx.fillStyle = '#aaa';
+  gCtx.fillText('avg', 62, 8);
+}
+
+function updateBrainInfo() {
+  if (!bestBrain) return;
+  const data = bestBrain.serialize();
+  const info = document.getElementById('brainInfo');
+  const preview = data.slice(0, 20).map(v => v.toFixed(3)).join(', ');
+  info.innerHTML = `<pre>Inputs: ${bestBrain.inputSize} | Hidden: ${bestBrain.hiddenSize} | Output: ${bestBrain.outputSize}
+Weights: ${data.length} total
+First 20: [${preview}...]</pre>`;
+}
+
+function log(msg, type = '') {
+  const el = document.getElementById('log');
+  const div = document.createElement('div');
+  div.className = type;
+  div.textContent = `[Gen ${generation}] ${msg}`;
+  el.appendChild(div);
+  el.scrollTop = el.scrollHeight;
+  // Keep last 50 entries
+  while (el.children.length > 50) el.removeChild(el.firstChild);
+}
+
+// ═══ SAVE / LOAD BRAIN ═══
+function saveBestBrain() {
+  if (!bestBrain) {
+    log('No best brain yet! Train first.', 'bad');
+    return;
+  }
+  const data = {
+    version: 1,
+    type: 'flappy_ga_brain',
+    inputSize: bestBrain.inputSize,
+    hiddenSize: bestBrain.hiddenSize,
+    outputSize: bestBrain.outputSize,
+    weights: bestBrain.serialize(),
+    generation: generation,
+    bestFitness: bestFitness,
+    bestScore: bestScore,
+    savedAt: new Date().toISOString()
+  };
+  const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `flappy_brain_gen${generation}_score${bestScore}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  log(`Saved brain! Gen ${generation}, Score ${bestScore}`, 'good');
+}
+
+function loadBrainPrompt() {
+  document.getElementById('fileInput').click();
+}
+
+function handleFileLoad(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const data = JSON.parse(e.target.result);
+      if (data.type !== 'flappy_ga_brain') {
+        log('Invalid brain file!', 'bad');
+        return;
+      }
+      bestBrain = NeuralNetwork.deserialize(data.weights, data.inputSize, data.hiddenSize, data.outputSize);
+      log(`Loaded brain from Gen ${data.generation}, Score ${data.bestScore}`, 'good');
+
+      // Apply to all birds (with some mutation for diversity)
+      for (let i = 0; i < birds.length; i++) {
+        if (i < ELITISM) {
+          birds[i].brain = bestBrain.clone();
+        } else {
+          birds[i].brain = bestBrain.clone().mutate(MUTATION_RATE);
+        }
+      }
+      updateBrainInfo();
+    } catch (err) {
+      log('Error loading brain: ' + err.message, 'bad');
+    }
+  };
+  reader.readAsText(file);
+  event.target.value = '';
+}
+
+function exportBrainJSON() {
+  if (!bestBrain) {
+    log('No brain to export!', 'bad');
+    return;
+  }
+  const data = {
+    version: 1,
+    type: 'flappy_ga_brain',
+    inputSize: bestBrain.inputSize,
+    hiddenSize: bestBrain.hiddenSize,
+    outputSize: bestBrain.outputSize,
+    weights: bestBrain.serialize(),
+    generation: generation,
+    bestFitness: bestFitness,
+    bestScore: bestScore
+  };
+  navigator.clipboard.writeText(JSON.stringify(data)).then(() => {
+    log('Brain JSON copied to clipboard!', 'good');
+  });
+}
+
+// ═══ START ═══
+init();
+log('Press ▶ Start to begin training!', 'info');
+gameLoop();
+</script>
+</body>
+</html>
