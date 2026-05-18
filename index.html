@@ -65,7 +65,7 @@ class Net {
     for (let i = 0; i < 3; i++) {
       let s = this.w[12 + i]; // bias
       for (let j = 0; j < 4; j++) s += inp[j] * this.w[i*4 + j];
-      h[i] = Math.max(0, s);
+      h[i] = Math.tanh(s); // Use tanh instead of ReLU for better gradient flow
     }
     // Output: 3 hidden -> 1
     let o = this.w[18]; // bias
