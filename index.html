@@ -177,7 +177,7 @@ const PIPE_W = 60;
 const PIPE_GAP = 170;
 const PIPE_SPEED = 3;
 const PIPE_SPAWN_INTERVAL = 90;
-const PIPE_FIRST_SPAWN = 40; // first pipe spawns much sooner
+const PIPE_FIRST_SPAWN = 1; // first pipe spawns immediately
 const BIRD_SIZE = 24;
 const BIRD_X = 80;
 
@@ -186,7 +186,7 @@ const BIRD_X = 80;
 // ══════════════════════════════════════════════
 class Bird {
   constructor(brain) {
-    this.y = CANVAS_H / 2;
+    this.y = CANVAS_H * 0.35;
     this.vel = FLAP_VEL * 0.5;
     this.alive = true;
     this.score = 0;
@@ -198,7 +198,7 @@ class Bird {
   }
 
   reset() {
-    this.y = CANVAS_H / 2;
+    this.y = CANVAS_H * 0.35;
     this.vel = FLAP_VEL * 0.5; // small initial upward boost
     this.alive = true;
     this.score = 0;
@@ -352,9 +352,14 @@ class Bird {
 //  PIPE CLASS
 // ══════════════════════════════════════════════
 class Pipe {
-  constructor(x) {
+  constructor(x, centered) {
     this.x = x;
-    this.gapTop = 60 + Math.random() * (CANVAS_H - PIPE_GAP - 160);
+    if (centered) {
+      // First pipe: gap centered on screen for fairness
+      this.gapTop = (CANVAS_H - PIPE_GAP) / 2;
+    } else {
+      this.gapTop = 60 + Math.random() * (CANVAS_H - PIPE_GAP - 160);
+    }
     this.passed = false;
   }
 
@@ -557,8 +562,10 @@ function gameLoop() {
   for (let s = 0; s < speedMultiplier; s++) {
     // Spawn pipes — first pipe sooner, then regular interval
     frameCount++;
-    if (frameCount === PIPE_FIRST_SPAWN || (frameCount > PIPE_FIRST_SPAWN && (frameCount - PIPE_FIRST_SPAWN) % PIPE_SPAWN_INTERVAL === 0)) {
-      pipes.push(new Pipe(CANVAS_W + 10));
+    if (frameCount === PIPE_FIRST_SPAWN) {
+      pipes.push(new Pipe(CANVAS_W * 0.4, true)); // first pipe close, centered gap
+    } else if (frameCount > PIPE_FIRST_SPAWN && (frameCount - PIPE_FIRST_SPAWN) % PIPE_SPAWN_INTERVAL === 0) {
+      pipes.push(new Pipe(CANVAS_W + 10, false));
     }
 
     // Update pipes
