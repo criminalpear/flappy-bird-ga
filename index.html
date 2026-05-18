@@ -3,399 +3,324 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Flappy Bird - Genetic Algorithm Trainer</title>
+<title>Flappy Bird - GA Trainer</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { background: #1a1a2e; color: #eee; font-family: 'Segoe UI', monospace; display: flex; flex-direction: column; align-items: center; padding: 10px; min-height: 100vh; }
-h1 { font-size: 18px; margin-bottom: 6px; color: #f0e68c; }
-#layout { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+body { background: #1a1a2e; color: #eee; font-family: monospace; display: flex; flex-direction: column; align-items: center; padding: 10px; }
+h1 { font-size: 16px; margin-bottom: 6px; color: #f0e68c; }
+#layout { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
 canvas { border: 2px solid #444; border-radius: 4px; }
-#panel { width: 280px; font-size: 12px; }
-#panel h3 { color: #7fff7f; margin: 8px 0 4px; font-size: 13px; }
-#stats { background: #16213e; padding: 8px; border-radius: 4px; line-height: 1.6; }
+#panel { width: 260px; font-size: 11px; }
+#panel h3 { color: #7fff7f; margin: 6px 0 3px; font-size: 12px; }
+#stats { background: #16213e; padding: 6px; border-radius: 4px; line-height: 1.5; }
 #stats span { color: #ffd700; }
-#controls { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0; }
-button { background: #0f3460; color: #eee; border: 1px solid #444; padding: 5px 10px; border-radius: 3px; cursor: pointer; font-size: 11px; }
+#controls { display: flex; flex-wrap: wrap; gap: 3px; margin: 6px 0; }
+button { background: #0f3460; color: #eee; border: 1px solid #444; padding: 4px 8px; border-radius: 3px; cursor: pointer; font-size: 10px; }
 button:hover { background: #1a5276; }
 button.active { background: #27ae60; }
-#brainInfo { background: #16213e; padding: 8px; border-radius: 4px; margin-top: 6px; max-height: 200px; overflow-y: auto; font-size: 11px; }
-#brainInfo pre { white-space: pre-wrap; word-break: break-all; }
-#fitnessGraph { background: #16213e; border-radius: 4px; margin-top: 6px; }
-#log { background: #0d1117; padding: 6px; border-radius: 4px; margin-top: 6px; max-height: 120px; overflow-y: auto; font-size: 10px; color: #888; }
+#fitnessGraph { background: #16213e; border-radius: 4px; margin-top: 4px; }
+#log { background: #0d1117; padding: 4px; border-radius: 4px; margin-top: 4px; max-height: 100px; overflow-y: auto; font-size: 9px; color: #888; }
 #log .good { color: #7fff7f; }
-#log .bad { color: #ff6b6b; }
 #log .info { color: #7fbfff; }
 </style>
 </head>
 <body>
-<h1>🐦 Flappy Bird — Genetic Algorithm Trainer</h1>
+<h1>🐦 Flappy Bird GA Trainer</h1>
 <div id="layout">
-  <canvas id="gameCanvas" width="400" height="600"></canvas>
+  <canvas id="gc" width="400" height="600"></canvas>
   <div id="panel">
     <div id="controls">
       <button id="btnStart" onclick="toggleTraining()">▶ Start</button>
-      <button id="btnSpeed" onclick="cycleSpeed()">Speed: 1x</button>
-      <button onclick="saveBestBrain()">💾 Save Brain</button>
-      <button onclick="loadBrainPrompt()">📂 Load Brain</button>
+      <button id="btnSpeed" onclick="cycleSpeed()">1x</button>
+      <button onclick="saveBestBrain()">💾 Save</button>
       <button onclick="resetTraining()">🔄 Reset</button>
-      <button onclick="exportBrainJSON()">📋 Export JSON</button>
     </div>
-    <h3>📊 Statistics</h3>
+    <h3>📊 Stats</h3>
     <div id="stats">
-      Generation: <span id="gen">0</span><br>
-      Alive: <span id="alive">0</span> / <span id="pop">0</span><br>
-      Best Score: <span id="bestScore">0</span><br>
-      Best Fitness: <span id="bestFit">0</span><br>
-      Avg Fitness: <span id="avgFit">0</span><br>
-      Mutation: <span id="mutRate">20%</span><br>
-      Speed: <span id="speedDisp">1x</span>
+      Gen: <span id="gen">0</span> | Alive: <span id="alive">0</span>/<span id="pop">0</span><br>
+      Best Score: <span id="bestScore">0</span> | Avg: <span id="avgScore">0</span><br>
+      Difficulty: <span id="diff">1</span> | Mut: <span id="mut">20%</span>
     </div>
-    <h3>📈 Best Score Over Time</h3>
-    <canvas id="fitnessGraph" width="280" height="100"></canvas>
-    <h3>🧠 Best Brain</h3>
-    <div id="brainInfo"><em>Train to see brain data...</em></div>
+    <h3>📈 Best Score</h3>
+    <canvas id="fg" width="260" height="80"></canvas>
     <h3>📜 Log</h3>
     <div id="log"></div>
   </div>
 </div>
-<input type="file" id="fileInput" accept=".json" style="display:none" onchange="handleFileLoad(event)">
-
 <script>
 // ══════════════════════════════════════════════
-//  NEURAL NETWORK — small: 5→4→1 (29 weights)
+//  TINY NET: 4→3→1 (19 weights) — small = evolvable
 // ══════════════════════════════════════════════
 class Net {
-  constructor() {
-    this.iS = 5; this.hS = 4; this.oS = 1;
-    // Xavier init
-    const s1 = Math.sqrt(2 / (this.iS + this.hS));
-    const s2 = Math.sqrt(2 / (this.hS + this.oS));
-    this.wIH = Array.from({length: this.hS}, () => Array.from({length: this.iS}, () => (Math.random()-0.5)*2*s1));
-    this.wHO = Array.from({length: this.oS}, () => Array.from({length: this.hS}, () => (Math.random()-0.5)*2*s2));
-    this.bH = new Array(this.hS).fill(0);
-    this.bO = new Array(this.oS).fill(0);
+  constructor(src) {
+    this.w = src ? src.slice() : [];
+    if (!src) {
+      // 4*3 + 3*1 + 3 + 1 = 19 weights
+      for (let i = 0; i < 19; i++) this.w.push((Math.random() - 0.5) * 2);
+    }
   }
-
-  forward(inputs) {
-    const h = new Array(this.hS);
-    for (let i = 0; i < this.hS; i++) {
-      let s = this.bH[i];
-      for (let j = 0; j < this.iS; j++) s += inputs[j] * this.wIH[i][j];
+  forward(inp) {
+    // Hidden: 4 inputs -> 3 hidden
+    const h = [0,0,0];
+    for (let i = 0; i < 3; i++) {
+      let s = this.w[12 + i]; // bias
+      for (let j = 0; j < 4; j++) s += inp[j] * this.w[i*4 + j];
       h[i] = Math.max(0, s);
     }
-    const o = new Array(this.oS);
-    for (let i = 0; i < this.oS; i++) {
-      let s = this.bO[i];
-      for (let j = 0; j < this.hS; j++) s += h[j] * this.wHO[i][j];
-      o[i] = 1 / (1 + Math.exp(-Math.max(-20, Math.min(20, s))));
+    // Output: 3 hidden -> 1
+    let o = this.w[18]; // bias
+    for (let i = 0; i < 3; i++) o += h[i] * this.w[15 + i];
+    return 1 / (1 + Math.exp(-Math.max(-15, Math.min(15, o))));
+  }
+  clone() { return new Net(this.w.slice()); }
+  mutate(rate, str) {
+    const w = this.w.slice();
+    for (let i = 0; i < w.length; i++) {
+      if (Math.random() < rate) w[i] += (Math.random() - 0.5) * 2 * str;
     }
-    return o;
+    return new Net(w);
   }
-
-  // Flatten to array
-  toArr() {
-    const d = [];
-    for (let r of this.wIH) d.push(...r);
-    for (let r of this.wHO) d.push(...r);
-    d.push(...this.bH, ...this.bO);
-    return d;
-  }
-
-  fromArr(a) {
-    let i = 0;
-    for (let h = 0; h < this.hS; h++) for (let j = 0; j < this.iS; j++) this.wIH[h][j] = a[i++];
-    for (let o = 0; o < this.oS; o++) for (let h = 0; h < this.hS; h++) this.wHO[o][h] = a[i++];
-    for (let h = 0; h < this.hS; h++) this.bH[h] = a[i++];
-    for (let o = 0; o < this.oS; o++) this.bO[o] = a[i++];
-    return this;
-  }
-
-  clone() { return new Net().fromArr(this.toArr()); }
-
-  // Gaussian mutation — perturb all weights slightly
-  mutate(rate, strength) {
-    const a = this.toArr();
-    for (let i = 0; i < a.length; i++) {
-      if (Math.random() < rate) a[i] += randn() * strength;
-    }
-    return new Net().fromArr(a);
+  static crossover(a, b) {
+    const w = [];
+    for (let i = 0; i < 19; i++) w.push(Math.random() < 0.5 ? a.w[i] : b.w[i]);
+    return new Net(w);
   }
 }
 
-function randn() {
-  // Box-Muller
-  let u = 0, v = 0;
-  while (u === 0) u = Math.random();
-  while (v === 0) v = Math.random();
-  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
-}
+// ══════════════════════════════════════════════
+//  GAME
+// ══════════════════════════════════════════════
+const CW=400, CH=600, GY=CH-30;
+const GRAV=0.32, FLAP=-5.8;
+const PW=50, PX=70, PR=12;
 
-// ══════════════════════════════════════════════
-//  GAME CONSTANTS
-// ══════════════════════════════════════════════
-const CW = 400, CH = 600;
-const GRAVITY = 0.35;
-const FLAP_VEL = -6.0;
-const PIPE_W = 54;
-const PIPE_GAP = 170;
-const PIPE_SPEED = 2.2;
-const PIPE_INTERVAL = 95;
-const BIRD_R = 13;
-const BIRD_X = 70;
-const GROUND_Y = CH - 30;
-
-// ══════════════════════════════════════════════
-//  PIPE
-// ══════════════════════════════════════════════
 class Pipe {
-  constructor(x, gapCenter) {
-    this.x = x;
-    this.gapCenter = gapCenter;
-    this.passed = false;
+  constructor(x, gapC, gapS) {
+    this.x = x; this.gapC = gapC; this.gapS = gapS; this.passed = false;
   }
-  update() { this.x -= PIPE_SPEED; }
-  draw(ctx) {
-    const gt = this.gapCenter - PIPE_GAP/2;
-    const gb = this.gapCenter + PIPE_GAP/2;
-    ctx.fillStyle = '#27ae60';
-    ctx.fillRect(this.x, 0, PIPE_W, gt);
-    ctx.fillRect(this.x, gb, PIPE_W, CH - gb);
-    ctx.fillStyle = '#1e8449';
-    ctx.fillRect(this.x-3, gt-18, PIPE_W+6, 18);
-    ctx.fillRect(this.x-3, gb, PIPE_W+6, 18);
+  update() { this.x -= this._speed; }
+  draw(c) {
+    const gt = this.gapC - this.gapS/2, gb = this.gapC + this.gapS/2;
+    c.fillStyle='#27ae60';
+    c.fillRect(this.x, 0, PW, gt);
+    c.fillRect(this.x, gb, PW, CH-gb);
+    c.fillStyle='#1e8449';
+    c.fillRect(this.x-3, gt-16, PW+6, 16);
+    c.fillRect(this.x-3, gb, PW+6, 16);
   }
-  hits(bird) {
-    const m = 3;
-    if (BIRD_X+m < this.x+PIPE_W && BIRD_X+BIRD_R*2-m > this.x) {
-      if (bird.y+m < this.gapCenter-PIPE_GAP/2 || bird.y+BIRD_R*2-m > this.gapCenter+PIPE_GAP/2) return true;
+  hits(b) {
+    const m=3;
+    if (PX+m < this.x+PW && PX+PR*2-m > this.x) {
+      if (b.y+m < this.gapC-this.gapS/2 || b.y+PR*2-m > this.gapC+this.gapS/2) return true;
     }
     return false;
   }
 }
 
-// ══════════════════════════════════════════════
-//  BIRD
-// ══════════════════════════════════════════════
 class Bird {
   constructor(brain) {
-    this.y = CH * 0.35;
-    this.vel = FLAP_VEL * 0.3;
-    this.alive = true;
-    this.score = 0;
-    this.fitness = 0;
-    this.frames = 0;
+    this.y = CH*0.35; this.vel = FLAP*0.3;
+    this.alive = true; this.score = 0; this.fitness = 0; this.frames = 0;
     this.brain = brain || new Net();
   }
-
-  think(pipes) {
-    let next = null;
-    for (let p of pipes) { if (p.x + PIPE_W > BIRD_X - BIRD_R) { next = p; break; } }
-    if (!next) {
-      // No pipe: fly toward vertical center
-      const inputs = [this.y/CH, this.vel/8, 1.0, 0.5, 0.5];
-      if (this.brain.forward(inputs)[0] > 0.5) this.flap();
-      return;
-    }
-    const inputs = [
+  think(pipe) {
+    if (!pipe) { if (this.brain.forward([this.y/CH, this.vel/8, 0.5, 0.5])[0] > 0.5) this.flap(); return; }
+    const inp = [
       this.y / CH,
       this.vel / 8,
-      (next.x - BIRD_X) / CW,
-      next.gapCenter / CH,
-      (next.gapCenter - PIPE_GAP/2) / CH  // gap top
+      (pipe.x - PX) / CW,
+      pipe.gapC / CH
     ];
-    if (this.brain.forward(inputs)[0] > 0.5) this.flap();
+    if (this.brain.forward(inp)[0] > 0.5) this.flap();
   }
-
-  flap() { this.vel = FLAP_VEL; }
-
+  flap() { this.vel = FLAP; }
   update(pipes) {
     if (!this.alive) return;
     this.frames++;
-    this.vel += GRAVITY;
-    this.y += this.vel;
-
-    if (this.y < 0) { this.y = 0; this.die(); return; }
-    if (this.y + BIRD_R*2 > GROUND_Y) { this.die(); return; }
+    this.vel += GRAV; this.y += this.vel;
+    if (this.y < 0) { this.y=0; this.die(); return; }
+    if (this.y+PR*2 > GY) { this.die(); return; }
     for (let p of pipes) { if (p.hits(this)) { this.die(); return; } }
-
     for (let p of pipes) {
-      if (!p.passed && p.x + PIPE_W < BIRD_X) {
-        p.passed = true;
-        this.score++;
-      }
+      if (!p.passed && p.x+PW < PX) { p.passed=true; this.score++; this.fitness+=500; }
     }
-
-    // Fitness: primarily frames survived + pipe bonuses
-    this.fitness += 1.0;
-    this.fitness += this.score * 200;
-
-    // Smooth centering reward
+    this.fitness += 1;
+    // Centering reward
     let next = null;
-    for (let p of pipes) { if (p.x + PIPE_W > BIRD_X) { next = p; break; } }
+    for (let p of pipes) { if (p.x+PW > PX) { next=p; break; } }
     if (next) {
-      const dist = Math.abs(this.y + BIRD_R - next.gapCenter);
-      this.fitness += Math.max(0, 1.5 - dist / PIPE_GAP);
+      const d = Math.abs(this.y+PR - next.gapC);
+      this.fitness += Math.max(0, 2 - d/next.gapS);
     }
   }
-
-  die() { this.alive = false; this.fitness = Math.max(this.fitness, 1); }
-
-  draw(ctx) {
+  die() { this.alive=false; this.fitness=Math.max(this.fitness,1); }
+  draw(c) {
     if (!this.alive) return;
-    const cx = BIRD_X + BIRD_R, cy = this.y + BIRD_R;
-    ctx.save(); ctx.translate(cx, cy);
-    ctx.rotate(Math.max(-0.4, Math.min(0.7, this.vel * 0.06)));
-    ctx.fillStyle = '#f0e68c';
-    ctx.beginPath(); ctx.ellipse(0, 0, BIRD_R, BIRD_R*0.85, 0, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(4, -4, 4, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(5, -4, 2, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#ff6b35'; ctx.beginPath(); ctx.moveTo(8, 0); ctx.lineTo(15, 2); ctx.lineTo(8, 5); ctx.closePath(); ctx.fill();
-    ctx.fillStyle = '#daa520'; ctx.beginPath(); ctx.ellipse(-3, 3, 6, 3.5, -0.3, 0, Math.PI*2); ctx.fill();
-    ctx.restore();
+    c.save(); c.translate(PX+PR, this.y+PR);
+    c.rotate(Math.max(-0.4, Math.min(0.7, this.vel*0.06)));
+    c.fillStyle='#f0e68c'; c.beginPath(); c.ellipse(0,0,PR,PR*0.85,0,0,Math.PI*2); c.fill();
+    c.fillStyle='#fff'; c.beginPath(); c.arc(3,-3,3,0,Math.PI*2); c.fill();
+    c.fillStyle='#000'; c.beginPath(); c.arc(4,-3,1.5,0,Math.PI*2); c.fill();
+    c.fillStyle='#ff6b35'; c.beginPath(); c.moveTo(7,0); c.lineTo(13,2); c.lineTo(7,4); c.closePath(); c.fill();
+    c.restore();
   }
 }
 
 // ══════════════════════════════════════════════
-//  GA — (μ+λ) evolution: keep best, mutate it heavily
+//  GA WITH CURRICULUM LEARNING
 // ══════════════════════════════════════════════
-const POP = 40;
-const ELITE = 5;
-const BASE_MUT_RATE = 0.25;
-const BASE_MUT_STR = 0.3;
+const POP = 30;
+let birds=[], pipes=[], fc=0;
+let gen=0, bestScore=0, bestBrain=null;
+let scoreHist=[], training=false, speed=1;
+let speeds=[1,10,50,100,200,500], si=0;
+let mutRate=0.3, mutStr=0.4;
 
-let birds = [], pipes = [], frameCount = 0;
-let gen = 0, bestScore = 0, bestFit = 0, bestBrain = null;
-let scoreHistory = [], training = false, speed = 1;
-let speeds = [1, 5, 10, 50, 100, 200], speedIdx = 0;
-let mutRate = BASE_MUT_RATE, mutStr = BASE_MUT_STR;
+// Curriculum: start easy, get harder as score improves
+let difficulty = 1; // 1=easy, 10=hard
+const GAP_SIZES = [200, 190, 180, 170, 160, 150, 140, 135, 130, 125];
+const PIPE_SPEEDS = [1.5, 1.7, 1.9, 2.0, 2.1, 2.2, 2.3, 2.4, 2.5, 2.5];
+const SPAWN_INTERVALS = [120, 115, 110, 105, 100, 95, 92, 90, 88, 85];
 
-const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d');
-const gCanvas = document.getElementById('fitnessGraph');
-const gCtx = gCanvas.getContext('2d');
+function getGapSize() { return GAP_SIZES[Math.min(difficulty-1, GAP_SIZES.length-1)]; }
+function getPipeSpeed() { return PIPE_SPEEDS[Math.min(difficulty-1, PIPE_SPEEDS.length-1)]; }
+function getSpawnInt() { return SPAWN_INTERVALS[Math.min(difficulty-1, SPAWN_INTERVALS.length-1)]; }
+
+const ctx = document.getElementById('gc').getContext('2d');
+const gctx = document.getElementById('fg').getContext('2d');
 
 function init() {
-  birds = [];
-  for (let i = 0; i < POP; i++) birds.push(new Bird());
-  pipes = []; frameCount = 0;
-  gen = 0; bestScore = 0; bestFit = 0; bestBrain = null;
-  scoreHistory = [];
-  mutRate = BASE_MUT_RATE; mutStr = BASE_MUT_STR;
-  log('Ready! Press ▶ Start', 'info');
+  birds=[]; for (let i=0;i<POP;i++) birds.push(new Bird());
+  pipes=[]; fc=0; gen=0; bestScore=0; bestBrain=null;
+  scoreHist=[]; difficulty=1; mutRate=0.3; mutStr=0.4;
+  log('Ready! Press ▶ Start','info');
+}
+
+function updateDifficulty() {
+  // Increase difficulty every time best score crosses a threshold
+  const newDiff = Math.min(10, Math.floor(bestScore / 3) + 1);
+  if (newDiff > difficulty) {
+    difficulty = newDiff;
+    log('Difficulty → ' + difficulty + ' (gap=' + getGapSize() + ')', 'info');
+  }
 }
 
 function nextGeneration() {
   gen++;
-
   for (let b of birds) if (b.alive) b.fitness = Math.max(b.fitness, 1);
-  birds.sort((a, b) => b.fitness - a.fitness);
+  birds.sort((a,b) => b.fitness - a.fitness);
 
   const top = birds[0];
-  const avg = birds.reduce((s, b) => s + b.fitness, 0) / POP;
+  const avgScore = birds.reduce((s,b)=>s+b.score,0)/POP;
 
-  // Track best score (not just fitness)
   if (top.score > bestScore) {
     bestScore = top.score;
     bestBrain = top.brain.clone();
-    log(`G${gen}: NEW BEST score=${bestScore} fit=${top.fitness.toFixed(0)} frames=${top.frames}`, 'good');
+    updateDifficulty();
+    log('G'+gen+': score='+bestScore+' frames='+top.frames+' diff='+difficulty,'good');
   }
-  if (top.fitness > bestFit) bestFit = top.fitness;
 
-  // Track best SCORE over time (not fitness — score is what matters)
-  scoreHistory.push({ gen: gen, score: bestScore });
-  if (scoreHistory.length > 300) scoreHistory.shift();
+  scoreHist.push({gen:gen, score:bestScore});
+  if (scoreHist.length > 300) scoreHist.shift();
 
-  // ═══ ADAPTIVE MUTATION based on score improvement ═══
-  if (gen > 5) {
-    const recent = scoreHistory.slice(-10);
-    const oldBest = recent[0].score;
-    const newBest = recent[recent.length-1].score;
-    if (newBest > oldBest) {
-      // Improving! Reduce mutation to fine-tune
-      mutStr = Math.max(0.05, mutStr * 0.9);
-      mutRate = Math.max(0.1, mutRate * 0.95);
+  // Adaptive mutation
+  if (gen > 3) {
+    const r = scoreHist.slice(-5);
+    if (r[r.length-1].score > r[0].score) {
+      mutStr = Math.max(0.05, mutStr * 0.88);
+      mutRate = Math.max(0.1, mutRate * 0.92);
     } else {
-      // Stuck — increase mutation to explore
-      mutStr = Math.min(0.8, mutStr * 1.15);
+      mutStr = Math.min(1.0, mutStr * 1.2);
       mutRate = Math.min(0.6, mutRate * 1.1);
     }
   }
 
-  // ═══ (μ+λ) SELECTION ═══
-  // Keep the absolute best brain alive across ALL generations
-  // This is the key: the best brain is NEVER lost
+  // ═══ SELECTION: Tournament k=3 + Elitism ═══
   const newBirds = [];
+  // Keep top 3 unchanged
+  for (let i = 0; i < 3; i++) newBirds.push(new Bird(birds[i].brain.clone()));
 
-  // 1. Always keep the global best brain (immortal)
-  if (bestBrain) {
-    newBirds.push(new Bird(bestBrain.clone()));
-  }
+  // If we have a global best, keep it too
+  if (bestBrain) newBirds.push(new Bird(bestBrain.clone()));
 
-  // 2. Keep top N from this generation (elites)
-  for (let i = 0; i < ELITE && i < birds.length; i++) {
-    newBirds.push(new Bird(birds[i].brain.clone()));
-  }
-
-  // 3. Fill rest by mutating the best brain with decreasing strength
-  // This creates a "family" of variants around the best known solution
-  while (newBirds.length < POP) {
-    if (bestBrain) {
-      // Mutate the global best — this is the key insight!
-      // Instead of random crossover, just perturb the best known solution
-      const variant = bestBrain.clone().mutate(mutRate, mutStr);
-      newBirds.push(new Bird(variant));
-    } else {
-      newBirds.push(new Bird());
+  // Tournament selection for the rest
+  function tournament() {
+    let best = birds[Math.floor(Math.random()*POP)];
+    for (let i = 0; i < 2; i++) {
+      const c = birds[Math.floor(Math.random()*POP)];
+      if (c.fitness > best.fitness) best = c;
     }
+    return best;
+  }
+
+  while (newBirds.length < POP) {
+    const a = tournament();
+    let b = tournament();
+    let t=0; while(b===a && t++<5) b=tournament();
+    let child;
+    if (Math.random() < 0.7) {
+      child = Net.crossover(a.brain, b.brain);
+    } else {
+      child = a.brain.clone();
+    }
+    child = child.mutate(mutRate, mutStr);
+    newBirds.push(new Bird(child));
   }
 
   birds = newBirds;
   pipes = [];
-  frameCount = 0;
+  fc = 0;
   updateStats();
   drawGraph();
-  updateBrainInfo();
 }
 
-// ══════════════════════════════════════════════
-//  GAME LOOP
-// ══════════════════════════════════════════════
 function gameLoop() {
-  // Sky
-  const sky = ctx.createLinearGradient(0, 0, 0, CH);
-  sky.addColorStop(0, '#4dc9f6'); sky.addColorStop(1, '#87ceeb');
-  ctx.fillStyle = sky; ctx.fillRect(0, 0, CW, CH);
-  ctx.fillStyle = '#8B4513'; ctx.fillRect(0, GROUND_Y, CW, 30);
-  ctx.fillStyle = '#228B22'; ctx.fillRect(0, GROUND_Y-5, CW, 8);
+  // Background
+  const sky = ctx.createLinearGradient(0,0,0,CH);
+  sky.addColorStop(0,'#4dc9f6'); sky.addColorStop(1,'#87ceeb');
+  ctx.fillStyle=sky; ctx.fillRect(0,0,CW,CH);
+  ctx.fillStyle='#8B4513'; ctx.fillRect(0,GY,CW,30);
+  ctx.fillStyle='#228B22'; ctx.fillRect(0,GY-5,CW,8);
 
   if (!training) {
-    for (let b of birds) { ctx.globalAlpha = 0.6; b.draw(ctx); ctx.globalAlpha = 1; }
-    ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(0, 0, CW, 28);
-    ctx.fillStyle = '#fff'; ctx.font = '12px monospace';
-    ctx.fillText('Press ▶ Start | Pop: ' + POP, 8, 18);
-    updateStats();
+    for (let b of birds) { ctx.globalAlpha=0.5; b.draw(ctx); ctx.globalAlpha=1; }
+    ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(0,0,CW,24);
+    ctx.fillStyle='#fff'; ctx.font='11px monospace';
+    ctx.fillText('Press ▶ Start', 8, 16);
     requestAnimationFrame(gameLoop);
     return;
   }
 
-  for (let s = 0; s < speed; s++) {
-    frameCount++;
+  for (let s=0; s<speed; s++) {
+    fc++;
+    const gapSize = getGapSize();
+    const pipeSpeed = getPipeSpeed();
+    const spawnInt = getSpawnInt();
 
     // Spawn pipes
-    if (frameCount === 1) {
-      // First pipe: gap centered on bird spawn position
-      pipes.push(new Pipe(CW * 0.4, CH * 0.35 + BIRD_R));
-    } else if ((frameCount - 1) % PIPE_INTERVAL === 0) {
-      const gapY = 80 + Math.random() * (CH - PIPE_GAP - 160);
-      pipes.push(new Pipe(CW + 10, gapY));
+    if (fc === 1) {
+      pipes.push(new Pipe(CW*0.45, CH*0.35+PR, gapSize));
+      pipes[0]._speed = pipeSpeed;
+    } else if ((fc-1) % spawnInt === 0) {
+      const gapY = 70 + Math.random() * (CH - gapSize - 140);
+      const p = new Pipe(CW+10, gapY, gapSize);
+      p._speed = pipeSpeed;
+      pipes.push(p);
     }
 
     for (let p of pipes) p.update();
-    pipes = pipes.filter(p => p.x + PIPE_W > -10);
+    pipes = pipes.filter(p => p.x+PW > -10);
 
+    // Find next pipe for each bird
     let alive = 0;
     for (let b of birds) {
-      if (b.alive) { b.think(pipes); b.update(pipes); if (b.alive) alive++; }
+      if (b.alive) {
+        let next = null;
+        for (let p of pipes) { if (p.x+PW > PX) { next=p; break; } }
+        b.think(next);
+        b.update(pipes);
+        if (b.alive) alive++;
+      }
     }
     if (alive === 0) nextGeneration();
   }
@@ -404,32 +329,27 @@ function gameLoop() {
   for (let p of pipes) p.draw(ctx);
   for (let b of birds) b.draw(ctx);
 
-  const best = birds.find(b => b.alive);
-  if (best) { ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 2; ctx.strokeRect(BIRD_X-2, best.y-2, BIRD_R*2+4, BIRD_R*2+4); }
+  const best = birds.find(b=>b.alive);
+  if (best) { ctx.strokeStyle='#ffd700'; ctx.lineWidth=2; ctx.strokeRect(PX-2,best.y-2,PR*2+4,PR*2+4); }
 
-  ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(0, 0, CW, 28);
-  ctx.fillStyle = '#fff'; ctx.font = '12px monospace';
-  ctx.fillText(`Gen:${gen} Alive:${birds.filter(b=>b.alive).length}/${POP} Best:${bestScore}`, 8, 18);
+  ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(0,0,CW,24);
+  ctx.fillStyle='#fff'; ctx.font='11px monospace';
+  ctx.fillText('G:'+gen+' A:'+birds.filter(b=>b.alive).length+'/'+POP+' Best:'+bestScore+' D:'+difficulty, 8, 16);
   updateStats();
   requestAnimationFrame(gameLoop);
 }
 
-// ══════════════════════════════════════════════
-//  UI
-// ══════════════════════════════════════════════
 function toggleTraining() {
   training = !training;
-  const btn = document.getElementById('btnStart');
-  btn.textContent = training ? '⏸ Pause' : '▶ Start';
-  btn.classList.toggle('active', training);
-  if (birds.length === 0) init();
+  document.getElementById('btnStart').textContent = training ? '⏸ Pause' : '▶ Start';
+  document.getElementById('btnStart').classList.toggle('active', training);
+  if (!birds.length) init();
 }
 
 function cycleSpeed() {
-  speedIdx = (speedIdx + 1) % speeds.length;
-  speed = speeds[speedIdx];
-  document.getElementById('btnSpeed').textContent = 'Speed: ' + speed + 'x';
-  document.getElementById('speedDisp').textContent = speed + 'x';
+  si = (si+1) % speeds.length;
+  speed = speeds[si];
+  document.getElementById('btnSpeed').textContent = speed + 'x';
 }
 
 function resetTraining() {
@@ -444,93 +364,54 @@ function updateStats() {
   document.getElementById('alive').textContent = birds.filter(b=>b.alive).length;
   document.getElementById('pop').textContent = POP;
   document.getElementById('bestScore').textContent = bestScore;
-  document.getElementById('bestFit').textContent = bestFit.toFixed(0);
-  const avg = birds.length ? birds.reduce((s,b)=>s+b.fitness,0)/birds.length : 0;
-  document.getElementById('avgFit').textContent = avg.toFixed(0);
-  document.getElementById('mutRate').textContent = (mutRate*100).toFixed(0)+'% s='+mutStr.toFixed(2);
+  const avg = birds.length ? birds.reduce((s,b)=>s+b.score,0)/birds.length : 0;
+  document.getElementById('avgScore').textContent = avg.toFixed(1);
+  document.getElementById('diff').textContent = difficulty;
+  document.getElementById('mut').textContent = (mutRate*100).toFixed(0)+'% s='+mutStr.toFixed(2);
 }
 
 function drawGraph() {
-  gCtx.fillStyle = '#16213e'; gCtx.fillRect(0, 0, 280, 100);
-  if (scoreHistory.length < 2) return;
-  const maxS = Math.max(...scoreHistory.map(s=>s.score), 1);
-  const toX = i => (i / (scoreHistory.length-1)) * 280;
-  const toY = v => 95 - (v / Math.max(maxS,1)) * 85;
+  gctx.fillStyle='#16213e'; gctx.fillRect(0,0,260,80);
+  if (scoreHist.length < 2) return;
+  const maxS = Math.max(...scoreHist.map(s=>s.score), 1);
+  const toX = i => (i/(scoreHist.length-1))*260;
+  const toY = v => 75 - (v/Math.max(maxS,1))*65;
 
-  // Grid
-  gCtx.strokeStyle = '#333'; gCtx.lineWidth = 0.5;
-  for (let i = 0; i <= 4; i++) { gCtx.beginPath(); gCtx.moveTo(0, 10+i*22.5); gCtx.lineTo(280, 10+i*22.5); gCtx.stroke(); }
+  gctx.strokeStyle='#333'; gctx.lineWidth=0.5;
+  for (let i=0;i<=4;i++) { gctx.beginPath(); gctx.moveTo(0,10+i*16); gctx.lineTo(260,10+i*16); gctx.stroke(); }
 
-  // Best score line (green)
-  gCtx.strokeStyle = '#7fff7f'; gCtx.lineWidth = 2; gCtx.beginPath();
-  for (let i = 0; i < scoreHistory.length; i++) {
-    const x = toX(i), y = toY(scoreHistory[i].score);
-    i===0 ? gCtx.moveTo(x,y) : gCtx.lineTo(x,y);
+  gctx.strokeStyle='#7fff7f'; gctx.lineWidth=2; gctx.beginPath();
+  for (let i=0;i<scoreHist.length;i++) {
+    i===0 ? gctx.moveTo(toX(i),toY(scoreHist[i].score)) : gctx.lineTo(toX(i),toY(scoreHist[i].score));
   }
-  gCtx.stroke();
+  gctx.stroke();
 
-  // Label
-  gCtx.fillStyle = '#7fff7f'; gCtx.font = '9px monospace';
-  gCtx.fillText('best score: ' + bestScore, 4, 12);
-}
-
-function updateBrainInfo() {
-  if (!bestBrain) return;
-  const a = bestBrain.toArr();
-  const p = a.slice(0,12).map(v=>v.toFixed(2)).join(', ');
-  document.getElementById('brainInfo').innerHTML = `<pre>Net: 5→4→1 | Weights: ${a.length}\nBest 12: [${p}...]</pre>`;
+  gctx.fillStyle='#7fff7f'; gctx.font='9px monospace';
+  gctx.fillText('best: '+bestScore, 4, 10);
 }
 
 function log(msg, type) {
   const el = document.getElementById('log');
   const d = document.createElement('div');
   d.className = type||'';
-  d.textContent = '[G'+gen+'] ' + msg;
+  d.textContent = '[G'+gen+'] '+msg;
   el.appendChild(d);
   el.scrollTop = el.scrollHeight;
-  while (el.children.length > 50) el.removeChild(el.firstChild);
+  while (el.children.length > 40) el.removeChild(el.firstChild);
 }
 
-// ═══ SAVE / LOAD ═══
 function saveBestBrain() {
-  if (!bestBrain) { log('No brain yet!', 'bad'); return; }
-  const data = { version:1, type:'flappy_ga_brain', inputSize:5, hiddenSize:4, outputSize:1,
-    weights: bestBrain.toArr(), generation: gen, bestFitness: bestFit, bestScore: bestScore,
-    savedAt: new Date().toISOString() };
-  const blob = new Blob([JSON.stringify(data)], {type:'application/json'});
+  if (!bestBrain) { log('No brain yet!','info'); return; }
+  const data = { version:1, type:'flappy_ga_brain', inputSize:4, hiddenSize:3, outputSize:1,
+    weights: bestBrain.w.slice(), generation:gen, bestScore:bestScore, difficulty:difficulty };
+  const blob = new Blob([JSON.stringify(data)],{type:'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href=url; a.download='flappy_brain_g'+gen+'_s'+bestScore+'.json'; a.click();
   URL.revokeObjectURL(url);
-  log('Saved! G'+gen+' Score '+bestScore, 'good');
+  log('Saved! Score='+bestScore,'good');
 }
 
-function loadBrainPrompt() { document.getElementById('fileInput').click(); }
-
-function handleFileLoad(e) {
-  const file = e.target.files[0]; if (!file) return;
-  const reader = new FileReader();
-  reader.onload = function(ev) {
-    try {
-      const data = JSON.parse(ev.target.result);
-      if (data.type !== 'flappy_ga_brain') { log('Invalid!', 'bad'); return; }
-      bestBrain = new Net().fromArr(data.weights);
-      log('Loaded G'+data.generation+' score='+data.bestScore, 'good');
-      for (let i=0;i<birds.length;i++) birds[i].brain = bestBrain.clone().mutate(0.1, 0.1);
-      updateBrainInfo();
-    } catch(err) { log('Error: '+err.message, 'bad'); }
-  };
-  reader.readAsText(file); e.target.value='';
-}
-
-function exportBrainJSON() {
-  if (!bestBrain) { log('No brain!', 'bad'); return; }
-  const data = { version:1, type:'flappy_ga_brain', inputSize:5, hiddenSize:4, outputSize:1,
-    weights: bestBrain.toArr(), generation:gen, bestFitness:bestFit, bestScore:bestScore };
-  navigator.clipboard.writeText(JSON.stringify(data)).then(()=>log('Copied!','good'));
-}
-
-// ═══ START ═══
 init();
 gameLoop();
 </script>
