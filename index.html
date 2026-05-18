@@ -119,7 +119,7 @@ class Pipe {
 
 class Bird {
   constructor(brain) {
-    this.y = CH*0.35; this.vel = FLAP*0.3;
+    this.y = CH*0.3; this.vel = FLAP*0.6;
     this.alive = true; this.score = 0; this.fitness = 0; this.frames = 0;
     this.brain = brain || new Net();
   }
@@ -299,7 +299,8 @@ function gameLoop() {
 
     // Spawn pipes
     if (fc === 1) {
-      pipes.push(new Pipe(CW*0.45, CH*0.35+PR, gapSize));
+      // First pipe: close to bird, gap centered on bird's starting position
+      pipes.push(new Pipe(CW*0.25, CH*0.3+PR, gapSize));
       pipes[0]._speed = pipeSpeed;
     } else if ((fc-1) % spawnInt === 0) {
       const gapY = 70 + Math.random() * (CH - gapSize - 140);
