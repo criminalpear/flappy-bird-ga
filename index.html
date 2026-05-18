@@ -71,23 +71,23 @@ class NeuralNetwork {
     this.inputSize = inputSize;
     this.hiddenSize = hiddenSize;
     this.outputSize = outputSize;
-    this.weightsIH = this.randomMatrix(hiddenSize, inputSize);
-    this.weightsHO = this.randomMatrix(outputSize, hiddenSize);
-    this.biasH = new Array(hiddenSize).fill(0).map(() => (Math.random() - 0.5) * 0.1);
-    this.biasO = new Array(outputSize).fill(0).map(() => (Math.random() - 0.5) * 0.1);
-  }
-
-  randomMatrix(rows, cols) {
-    return Array.from({ length: rows }, () =>
-      Array.from({ length: cols }, () => (Math.random() - 0.5) * 2)
+    // Xavier initialization for better gradient flow
+    const scaleIH = Math.sqrt(2.0 / (inputSize + hiddenSize));
+    const scaleHO = Math.sqrt(2.0 / (hiddenSize + outputSize));
+    this.weightsIH = Array.from({ length: hiddenSize }, () =>
+      Array.from({ length: inputSize }, () => (Math.random() - 0.5) * 2 * scaleIH)
     );
+    this.weightsHO = Array.from({ length: outputSize }, () =>
+      Array.from({ length: hiddenSize }, () => (Math.random() - 0.5) * 2 * scaleHO)
+    );
+    this.biasH = new Array(hiddenSize).fill(0);
+    this.biasO = new Array(outputSize).fill(0);
   }
 
   relu(x) { return Math.max(0, x); }
   sigmoid(x) { return 1 / (1 + Math.exp(-Math.max(-20, Math.min(20, x)))); }
 
   forward(inputs) {
-    // Hidden layer
     this.hidden = new Array(this.hiddenSize);
     for (let h = 0; h < this.hiddenSize; h++) {
       let sum = this.biasH[h];
@@ -96,7 +96,6 @@ class NeuralNetwork {
       }
       this.hidden[h] = this.relu(sum);
     }
-    // Output layer
     this.output = new Array(this.outputSize);
     for (let o = 0; o < this.outputSize; o++) {
       let sum = this.biasO[o];
@@ -108,7 +107,6 @@ class NeuralNetwork {
     return this.output;
   }
 
-  // Flatten all weights/biases into a single array
   serialize() {
     const data = [];
     for (let row of this.weightsIH) data.push(...row);
@@ -118,7 +116,6 @@ class NeuralNetwork {
     return data;
   }
 
-  // Load from flat array
   static deserialize(arr, inputSize, hiddenSize, outputSize) {
     const nn = new NeuralNetwork(0, 0, 0);
     nn.inputSize = inputSize;
@@ -145,11 +142,12 @@ class NeuralNetwork {
     return NeuralNetwork.deserialize(this.serialize(), this.inputSize, this.hiddenSize, this.outputSize);
   }
 
-  mutate(rate) {
+  mutate(rate, strength) {
+    strength = strength || 0.5;
     const data = this.serialize();
     for (let i = 0; i < data.length; i++) {
       if (Math.random() < rate) {
-        data[i] += (Math.random() - 0.5) * 0.5;
+        data[i] += (Math.random() - 0.5) * 2 * strength;
       }
     }
     return NeuralNetwork.deserialize(data, this.inputSize, this.hiddenSize, this.outputSize);
@@ -159,8 +157,11 @@ class NeuralNetwork {
     const dataA = a.serialize();
     const dataB = b.serialize();
     const child = [];
+    // Blend crossover: weighted average + noise, better than uniform
+    const alpha = Math.random();
     for (let i = 0; i < dataA.length; i++) {
-      child.push(Math.random() < 0.5 ? dataA[i] : dataB[i]);
+      const blend = alpha * dataA[i] + (1 - alpha) * dataB[i];
+      child.push(blend);
     }
     return NeuralNetwork.deserialize(child, a.inputSize, a.hiddenSize, a.outputSize);
   }
@@ -234,12 +235,13 @@ class Bird {
     this.vel += GRAVITY;
     this.y += this.vel;
 
-    // Check pipe passing
+    // Check pipe passing — reward ONCE per pipe
     for (let p of pipes) {
       if (!p.passed && p.x + PIPE_W < BIRD_X) {
         p.passed = true;
         this.score++;
         this.passedPipes++;
+        this.fitness += 100; // reward ONCE when passing, not every frame
       }
     }
 
@@ -262,19 +264,18 @@ class Bird {
       }
     }
 
-    // ═══ FITNESS / REWARD SYSTEM ═══
-    // Small reward for staying alive (encourages survival)
-    this.fitness += 0.1;
-    // Big reward for passing pipes
-    this.fitness += this.passedPipes * 50;
-    // Penalty for being far from gap center (encourages centering)
+    // ═══ PER-FRAME FITNESS ═══
+    // Small reward for staying alive
+    this.fitness += 0.5;
+    // Reward for being close to gap center (smooth signal)
     if (pipes.length) {
       let nextPipe = pipes.find(p => p.x + PIPE_W > BIRD_X);
       if (nextPipe) {
         const gapCenter = nextPipe.gapTop + PIPE_GAP / 2;
         const birdCenter = this.y + BIRD_SIZE / 2;
-        const dist = Math.abs(birdCenter - gapCenter) / CANVAS_H;
-        this.fitness -= dist * 0.05; // small penalty for being off-center
+        const dist = Math.abs(birdCenter - gapCenter);
+        // Reward closeness: max 1.0 at center, decreasing with distance
+        this.fitness += Math.max(0, 1.0 - dist / (PIPE_GAP * 0.6));
       }
     }
   }
@@ -391,9 +392,10 @@ class Pipe {
 // ══════════════════════════════════════════════
 //  GENETIC ALGORITHM
 // ══════════════════════════════════════════════
-const POP_SIZE = 60;
-const MUTATION_RATE = 0.12;
-const ELITISM = 4;
+const POP_SIZE = 80;
+const MUTATION_RATE = 0.15;
+const MUTATION_STRENGTH = 0.4;
+const ELITISM = 6;
 
 let birds = [];
 let pipes = [];
@@ -407,6 +409,7 @@ let training = false;
 let speedMultiplier = 1;
 let speedOptions = [1, 2, 5, 10, 50];
 let speedIdx = 0;
+let currentMutationRate = MUTATION_RATE;
 
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
@@ -431,7 +434,7 @@ function init() {
 function nextGeneration() {
   generation++;
 
-  // Calculate fitness for all birds
+  // Finalize fitness for alive birds
   for (let b of birds) {
     if (b.alive) {
       b.fitness = Math.max(b.fitness, 1);
@@ -456,21 +459,54 @@ function nextGeneration() {
   fitnessHistory.push({ gen: generation, best: genBest.fitness, avg: avgFit });
   if (fitnessHistory.length > 200) fitnessHistory.shift();
 
-  // ═══ SELECTION: Tournament selection ═══
+  // ═══ ADAPTIVE MUTATION ═══
+  if (generation > 3 && fitnessHistory.length > 3) {
+    const recent = fitnessHistory.slice(-3);
+    const improving = recent[recent.length - 1].best > recent[0].best + 1;
+    if (improving) {
+      currentMutationRate = Math.max(0.05, currentMutationRate * 0.9);
+    } else {
+      currentMutationRate = Math.min(0.4, currentMutationRate * 1.2);
+      if (currentMutationRate > 0.3) {
+        log('High mutation — exploring...', 'info');
+      }
+    }
+  }
+
+  // ═══ SELECTION: Rank-based + Elitism ═══
   const newBirds = [];
 
   // Elitism: keep top N unchanged
-  for (let i = 0; i < ELITISM; i++) {
-    const elite = new Bird(birds[i].brain.clone());
-    newBirds.push(elite);
+  for (let i = 0; i < ELITISM && i < birds.length; i++) {
+    newBirds.push(new Bird(birds[i].brain.clone()));
   }
 
-  // Fill rest with crossover + mutation
+  // Fill rest using rank-weighted selection + crossover + mutation
+  // Rank selection: probability proportional to rank, not fitness
+  // This prevents one super-bird from dominating too early
+  const ranks = birds.map((_, i) => birds.length - i);
+  const totalRank = ranks.reduce((a, b) => a + b, 0);
+
+  function rankSelect() {
+    let r = Math.random() * totalRank;
+    for (let i = 0; i < birds.length; i++) {
+      r -= ranks[i];
+      if (r <= 0) return birds[i];
+    }
+    return birds[0];
+  }
+
   while (newBirds.length < POP_SIZE) {
-    const parentA = tournamentSelect();
-    const parentB = tournamentSelect();
+    const parentA = rankSelect();
+    const parentB = rankSelect();
+    // Ensure parents are different
+    let attempts = 0;
+    while (parentB === parentA && attempts < 10) {
+      parentB = rankSelect();
+      attempts++;
+    }
     const childBrain = NeuralNetwork.crossover(parentA.brain, parentB.brain);
-    childBrain.mutate(MUTATION_RATE);
+    childBrain.mutate(currentMutationRate, MUTATION_STRENGTH);
     newBirds.push(new Bird(childBrain));
   }
 
@@ -478,28 +514,9 @@ function nextGeneration() {
   pipes = [];
   frameCount = 0;
 
-  // Adaptive mutation: decrease if we're improving
-  if (generation > 5 && fitnessHistory.length > 5) {
-    const recent = fitnessHistory.slice(-5);
-    const improving = recent[recent.length - 1].best > recent[0].best;
-    if (!improving) {
-      // Stuck — increase diversity
-      log('Stuck! Increasing mutation pressure...', 'info');
-    }
-  }
-
   updateStats();
   drawFitnessGraph();
   updateBrainInfo();
-}
-
-function tournamentSelect(k = 5) {
-  let best = null;
-  for (let i = 0; i < k; i++) {
-    const candidate = birds[Math.floor(Math.random() * birds.length)];
-    if (!best || candidate.fitness > best.fitness) best = candidate;
-  }
-  return best;
 }
 
 // ══════════════════════════════════════════════
@@ -629,7 +646,7 @@ function updateStats() {
   document.getElementById('bestScore').textContent = bestScore;
   const avg = birds.length ? birds.reduce((s, b) => s + b.fitness, 0) / birds.length : 0;
   document.getElementById('avgFit').textContent = avg.toFixed(1);
-  document.getElementById('mutRate').textContent = (MUTATION_RATE * 100).toFixed(0) + '%';
+  document.getElementById('mutRate').textContent = (currentMutationRate * 100).toFixed(0) + '%';
 }
 
 function drawFitnessGraph() {
