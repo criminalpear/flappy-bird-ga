@@ -9,7 +9,7 @@
 body { background: #1a1a2e; color: #eee; font-family: 'Segoe UI', monospace; display: flex; flex-direction: column; align-items: center; padding: 10px; min-height: 100vh; }
 h1 { font-size: 18px; margin-bottom: 6px; color: #f0e68c; }
 #layout { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
-canvas { border: 2px solid #444; border-radius: 4px; image-rendering: pixelated; }
+canvas { border: 2px solid #444; border-radius: 4px; }
 #panel { width: 280px; font-size: 12px; }
 #panel h3 { color: #7fff7f; margin: 8px 0 4px; font-size: 13px; }
 #stats { background: #16213e; padding: 8px; border-radius: 4px; line-height: 1.6; }
@@ -47,7 +47,7 @@ button.active { background: #27ae60; }
       Best Fitness: <span id="bestFit">0</span><br>
       Best Score: <span id="bestScore">0</span><br>
       Avg Fitness: <span id="avgFit">0</span><br>
-      Mutation Rate: <span id="mutRate">10%</span><br>
+      Mutation Rate: <span id="mutRate">15%</span><br>
       Speed: <span id="speedDisp">1x</span>
     </div>
     <h3>📈 Fitness History</h3>
@@ -58,83 +58,78 @@ button.active { background: #27ae60; }
     <div id="log"></div>
   </div>
 </div>
-
-<!-- Hidden file input for loading brains -->
 <input type="file" id="fileInput" accept=".json" style="display:none" onchange="handleFileLoad(event)">
 
 <script>
 // ══════════════════════════════════════════════
-//  NEURAL NETWORK (simple feedforward)
+//  NEURAL NETWORK
 // ══════════════════════════════════════════════
 class NeuralNetwork {
   constructor(inputSize, hiddenSize, outputSize) {
     this.inputSize = inputSize;
     this.hiddenSize = hiddenSize;
     this.outputSize = outputSize;
-    // Xavier initialization for better gradient flow
-    const scaleIH = Math.sqrt(2.0 / (inputSize + hiddenSize));
-    const scaleHO = Math.sqrt(2.0 / (hiddenSize + outputSize));
-    this.weightsIH = Array.from({ length: hiddenSize }, () =>
-      Array.from({ length: inputSize }, () => (Math.random() - 0.5) * 2 * scaleIH)
-    );
-    this.weightsHO = Array.from({ length: outputSize }, () =>
-      Array.from({ length: hiddenSize }, () => (Math.random() - 0.5) * 2 * scaleHO)
-    );
+    // Xavier initialization
+    const s1 = Math.sqrt(2.0 / (inputSize + hiddenSize));
+    const s2 = Math.sqrt(2.0 / (hiddenSize + outputSize));
+    this.weightsIH = [];
+    for (let h = 0; h < hiddenSize; h++) {
+      this.weightsIH[h] = [];
+      for (let i = 0; i < inputSize; i++) {
+        this.weightsIH[h][i] = (Math.random() - 0.5) * 2 * s1;
+      }
+    }
+    this.weightsHO = [];
+    for (let o = 0; o < outputSize; o++) {
+      this.weightsHO[o] = [];
+      for (let h = 0; h < hiddenSize; h++) {
+        this.weightsHO[o][h] = (Math.random() - 0.5) * 2 * s2;
+      }
+    }
     this.biasH = new Array(hiddenSize).fill(0);
     this.biasO = new Array(outputSize).fill(0);
   }
 
-  relu(x) { return Math.max(0, x); }
-  sigmoid(x) { return 1 / (1 + Math.exp(-Math.max(-20, Math.min(20, x)))); }
-
   forward(inputs) {
-    this.hidden = new Array(this.hiddenSize);
+    const hidden = new Array(this.hiddenSize);
     for (let h = 0; h < this.hiddenSize; h++) {
       let sum = this.biasH[h];
       for (let i = 0; i < this.inputSize; i++) {
         sum += inputs[i] * this.weightsIH[h][i];
       }
-      this.hidden[h] = this.relu(sum);
+      hidden[h] = Math.max(0, sum); // ReLU
     }
-    this.output = new Array(this.outputSize);
+    const output = new Array(this.outputSize);
     for (let o = 0; o < this.outputSize; o++) {
       let sum = this.biasO[o];
       for (let h = 0; h < this.hiddenSize; h++) {
-        sum += this.hidden[h] * this.weightsHO[o][h];
+        sum += hidden[h] * this.weightsHO[o][h];
       }
-      this.output[o] = this.sigmoid(sum);
+      // Sigmoid
+      output[o] = 1.0 / (1.0 + Math.exp(-Math.max(-20, Math.min(20, sum))));
     }
-    return this.output;
+    return output;
   }
 
   serialize() {
-    const data = [];
-    for (let row of this.weightsIH) data.push(...row);
-    for (let row of this.weightsHO) data.push(...row);
-    data.push(...this.biasH);
-    data.push(...this.biasO);
-    return data;
+    const d = [];
+    for (let row of this.weightsIH) d.push(...row);
+    for (let row of this.weightsHO) d.push(...row);
+    d.push(...this.biasH);
+    d.push(...this.biasO);
+    return d;
   }
 
-  static deserialize(arr, inputSize, hiddenSize, outputSize) {
+  static deserialize(arr, iS, hS, oS) {
     const nn = new NeuralNetwork(0, 0, 0);
-    nn.inputSize = inputSize;
-    nn.hiddenSize = hiddenSize;
-    nn.outputSize = outputSize;
+    nn.inputSize = iS; nn.hiddenSize = hS; nn.outputSize = oS;
     let idx = 0;
     nn.weightsIH = [];
-    for (let h = 0; h < hiddenSize; h++) {
-      nn.weightsIH[h] = arr.slice(idx, idx + inputSize);
-      idx += inputSize;
-    }
+    for (let h = 0; h < hS; h++) { nn.weightsIH[h] = arr.slice(idx, idx+iS); idx += iS; }
     nn.weightsHO = [];
-    for (let o = 0; o < outputSize; o++) {
-      nn.weightsHO[o] = arr.slice(idx, idx + hiddenSize);
-      idx += hiddenSize;
-    }
-    nn.biasH = arr.slice(idx, idx + hiddenSize);
-    idx += hiddenSize;
-    nn.biasO = arr.slice(idx, idx + outputSize);
+    for (let o = 0; o < oS; o++) { nn.weightsHO[o] = arr.slice(idx, idx+hS); idx += hS; }
+    nn.biasH = arr.slice(idx, idx+hS); idx += hS;
+    nn.biasO = arr.slice(idx, idx+oS);
     return nn;
   }
 
@@ -143,25 +138,22 @@ class NeuralNetwork {
   }
 
   mutate(rate, strength) {
-    strength = strength || 0.5;
-    const data = this.serialize();
-    for (let i = 0; i < data.length; i++) {
+    const d = this.serialize();
+    for (let i = 0; i < d.length; i++) {
       if (Math.random() < rate) {
-        data[i] += (Math.random() - 0.5) * 2 * strength;
+        d[i] += (Math.random() - 0.5) * 2 * strength;
       }
     }
-    return NeuralNetwork.deserialize(data, this.inputSize, this.hiddenSize, this.outputSize);
+    return NeuralNetwork.deserialize(d, this.inputSize, this.hiddenSize, this.outputSize);
   }
 
   static crossover(a, b) {
-    const dataA = a.serialize();
-    const dataB = b.serialize();
-    const child = [];
-    // Blend crossover: weighted average + noise, better than uniform
+    const dA = a.serialize();
+    const dB = b.serialize();
     const alpha = Math.random();
-    for (let i = 0; i < dataA.length; i++) {
-      const blend = alpha * dataA[i] + (1 - alpha) * dataB[i];
-      child.push(blend);
+    const child = [];
+    for (let i = 0; i < dA.length; i++) {
+      child.push(alpha * dA[i] + (1 - alpha) * dB[i]);
     }
     return NeuralNetwork.deserialize(child, a.inputSize, a.hiddenSize, a.outputSize);
   }
@@ -170,61 +162,94 @@ class NeuralNetwork {
 // ══════════════════════════════════════════════
 //  GAME CONSTANTS
 // ══════════════════════════════════════════════
-const CANVAS_W = 400, CANVAS_H = 600;
-const GRAVITY = 0.45;
-const FLAP_VEL = -7.5;
-const PIPE_W = 60;
-const PIPE_GAP = 170;
-const PIPE_SPEED = 3;
-const PIPE_SPAWN_INTERVAL = 90;
-const PIPE_FIRST_SPAWN = 1; // first pipe spawns immediately
-const BIRD_SIZE = 24;
-const BIRD_X = 80;
+const CW = 400, CH = 600;
+const GRAVITY = 0.4;
+const FLAP_VEL = -6.5;
+const PIPE_W = 54;
+const PIPE_GAP = 160;
+const PIPE_SPEED = 2.5;
+const PIPE_INTERVAL = 100;
+const BIRD_R = 14;
+const BIRD_X = 70;
+const GROUND_Y = CH - 30;
 
 // ══════════════════════════════════════════════
-//  BIRD CLASS
+//  PIPE
+// ══════════════════════════════════════════════
+class Pipe {
+  constructor(x, gapY) {
+    this.x = x;
+    this.gapY = gapY; // center of gap
+    this.passed = false;
+  }
+  update() { this.x -= PIPE_SPEED; }
+  draw(ctx) {
+    const topH = this.gapY - PIPE_GAP/2;
+    const botY = this.gapY + PIPE_GAP/2;
+    // Top pipe
+    ctx.fillStyle = '#27ae60';
+    ctx.fillRect(this.x, 0, PIPE_W, topH);
+    ctx.fillStyle = '#1e8449';
+    ctx.fillRect(this.x - 3, topH - 18, PIPE_W + 6, 18);
+    // Bottom pipe
+    ctx.fillStyle = '#27ae60';
+    ctx.fillRect(this.x, botY, PIPE_W, CH - botY);
+    ctx.fillStyle = '#1e8449';
+    ctx.fillRect(this.x - 3, botY, PIPE_W + 6, 18);
+  }
+  collides(bird) {
+    const by = bird.y, br = BIRD_R;
+    // Bird hitbox (slightly smaller)
+    const m = 3;
+    if (BIRD_X + m < this.x + PIPE_W && BIRD_X + br*2 - m > this.x) {
+      const gapTop = this.gapY - PIPE_GAP/2;
+      const gapBot = this.gapY + PIPE_GAP/2;
+      if (by + m < gapTop || by + br*2 - m > gapBot) return true;
+    }
+    return false;
+  }
+}
+
+// ══════════════════════════════════════════════
+//  BIRD
 // ══════════════════════════════════════════════
 class Bird {
   constructor(brain) {
-    this.y = CANVAS_H * 0.35;
-    this.vel = FLAP_VEL * 0.5;
+    this.y = CH * 0.35;
+    this.vel = FLAP_VEL * 0.4;
     this.alive = true;
     this.score = 0;
     this.fitness = 0;
-    this.passedPipes = 0;
     this.framesAlive = 0;
     this.brain = brain || new NeuralNetwork(5, 8, 1);
-    this.deathReason = '';
   }
 
-  reset() {
-    this.y = CANVAS_H * 0.35;
-    this.vel = FLAP_VEL * 0.5; // small initial upward boost
-    this.alive = true;
-    this.score = 0;
-    this.fitness = 0;
-    this.passedPipes = 0;
-    this.framesAlive = 0;
-    this.deathReason = '';
-  }
-
-  // Inputs: normalized y, velocity, distance to next pipe, top of gap, bottom of gap
   think(pipes) {
-    if (!pipes.length) return;
     // Find next pipe ahead of bird
-    let nextPipe = pipes.find(p => p.x + PIPE_W > BIRD_X);
-    if (!nextPipe) nextPipe = pipes[0];
-
+    let next = null;
+    for (let p of pipes) {
+      if (p.x + PIPE_W > BIRD_X) { next = p; break; }
+    }
+    if (!next) {
+      // No pipe ahead — fly toward center
+      const inputs = [
+        this.y / CH,
+        this.vel / 8,
+        1.0, // far away
+        0.5, // gap center
+        0.5
+      ];
+      if (this.brain.forward(inputs)[0] > 0.5) this.flap();
+      return;
+    }
     const inputs = [
-      this.y / CANVAS_H,
-      this.vel / 10,
-      (nextPipe.x - BIRD_X) / CANVAS_W,
-      nextPipe.gapTop / CANVAS_H,
-      (nextPipe.gapTop + PIPE_GAP) / CANVAS_H
+      this.y / CH,
+      this.vel / 8,
+      (next.x - BIRD_X) / CW,
+      (next.gapY - PIPE_GAP/2) / CH,  // gap top
+      (next.gapY + PIPE_GAP/2) / CH   // gap bottom
     ];
-
-    const output = this.brain.forward(inputs);
-    if (output[0] > 0.5) this.flap();
+    if (this.brain.forward(inputs)[0] > 0.5) this.flap();
   }
 
   flap() { this.vel = FLAP_VEL; }
@@ -235,292 +260,156 @@ class Bird {
     this.vel += GRAVITY;
     this.y += this.vel;
 
-    // Check pipe passing — reward ONCE per pipe
+    // Ground / ceiling
+    if (this.y < 0) { this.y = 0; this.die(); return; }
+    if (this.y + BIRD_R*2 > GROUND_Y) { this.die(); return; }
+
+    // Pipe collision
+    for (let p of pipes) {
+      if (p.collides(this)) { this.die(); return; }
+    }
+
+    // Pass pipe
     for (let p of pipes) {
       if (!p.passed && p.x + PIPE_W < BIRD_X) {
         p.passed = true;
         this.score++;
-        this.passedPipes++;
-        this.fitness += 100; // reward ONCE when passing, not every frame
+        this.fitness += 100;
       }
     }
 
-    // Collision: ceiling/floor (ground at CANVAS_H - 30 to match visual)
-    if (this.y < 0) {
-      this.y = 0;
-      this.die('ceiling');
-      return;
-    }
-    if (this.y + BIRD_SIZE > CANVAS_H - 30) {
-      this.die('ground');
-      return;
-    }
-
-    // Collision: pipes
-    for (let p of pipes) {
-      if (this.collidesWith(p)) {
-        this.die('pipe');
-        return;
-      }
-    }
-
-    // ═══ PER-FRAME FITNESS ═══
-    // Small reward for staying alive
+    // Per-frame fitness
     this.fitness += 0.5;
-    // Reward for being close to gap center (smooth signal)
-    if (pipes.length) {
-      let nextPipe = pipes.find(p => p.x + PIPE_W > BIRD_X);
-      if (nextPipe) {
-        const gapCenter = nextPipe.gapTop + PIPE_GAP / 2;
-        const birdCenter = this.y + BIRD_SIZE / 2;
-        const dist = Math.abs(birdCenter - gapCenter);
-        // Reward closeness: max 1.0 at center, decreasing with distance
-        this.fitness += Math.max(0, 1.0 - dist / (PIPE_GAP * 0.6));
-      }
+    // Reward being near gap center of next pipe
+    let next = null;
+    for (let p of pipes) { if (p.x + PIPE_W > BIRD_X) { next = p; break; } }
+    if (next) {
+      const birdCenter = this.y + BIRD_R;
+      const dist = Math.abs(birdCenter - next.gapY);
+      this.fitness += Math.max(0, 1.0 - dist / (PIPE_GAP * 0.5));
     }
   }
 
-  collidesWith(pipe) {
-    const birdRight = BIRD_X + BIRD_SIZE;
-    const birdBottom = this.y + BIRD_SIZE;
-    // Bird hitbox (slightly smaller for fairness)
-    const margin = 4;
-    if (BIRD_X + margin < pipe.x + PIPE_W && birdRight - margin > pipe.x) {
-      if (this.y + margin < pipe.gapTop || birdBottom - margin > pipe.gapTop + PIPE_GAP) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  die(reason) {
+  die() {
     this.alive = false;
-    this.deathReason = reason;
-    // ═══ DEATH PENALTIES ═══
-    if (reason === 'ceiling') this.fitness -= 10; // punish ceiling hits
-    if (reason === 'ground') this.fitness -= 5;
-    // Ensure fitness doesn't go too negative
     this.fitness = Math.max(this.fitness, 1);
   }
 
   draw(ctx) {
+    if (!this.alive) return;
+    const cx = BIRD_X + BIRD_R;
+    const cy = this.y + BIRD_R;
     ctx.save();
-    // Bird body
-    const cx = BIRD_X + BIRD_SIZE / 2;
-    const cy = this.y + BIRD_SIZE / 2;
-    // Tilt based on velocity
-    const angle = Math.max(-0.5, Math.min(0.8, this.vel * 0.08));
     ctx.translate(cx, cy);
-    ctx.rotate(angle);
-
+    ctx.rotate(Math.max(-0.4, Math.min(0.7, this.vel * 0.06)));
     // Body
-    ctx.fillStyle = this.alive ? '#f0e68c' : '#888';
-    ctx.beginPath();
-    ctx.ellipse(0, 0, BIRD_SIZE / 2, BIRD_SIZE / 2.5, 0, 0, Math.PI * 2);
-    ctx.fill();
-
+    ctx.fillStyle = '#f0e68c';
+    ctx.beginPath(); ctx.ellipse(0, 0, BIRD_R, BIRD_R*0.85, 0, 0, Math.PI*2); ctx.fill();
     // Eye
     ctx.fillStyle = '#fff';
-    ctx.beginPath();
-    ctx.arc(5, -3, 5, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.beginPath(); ctx.arc(4, -4, 4, 0, Math.PI*2); ctx.fill();
     ctx.fillStyle = '#000';
-    ctx.beginPath();
-    ctx.arc(6, -3, 2.5, 0, Math.PI * 2);
-    ctx.fill();
-
+    ctx.beginPath(); ctx.arc(5, -4, 2, 0, Math.PI*2); ctx.fill();
     // Beak
     ctx.fillStyle = '#ff6b35';
-    ctx.beginPath();
-    ctx.moveTo(10, 0);
-    ctx.lineTo(18, 2);
-    ctx.lineTo(10, 5);
-    ctx.closePath();
-    ctx.fill();
-
+    ctx.beginPath(); ctx.moveTo(8, 0); ctx.lineTo(15, 2); ctx.lineTo(8, 5); ctx.closePath(); ctx.fill();
     // Wing
     ctx.fillStyle = '#daa520';
-    ctx.beginPath();
-    ctx.ellipse(-2, 3, 7, 4, -0.3, 0, Math.PI * 2);
-    ctx.fill();
-
+    ctx.beginPath(); ctx.ellipse(-3, 3, 6, 3.5, -0.3, 0, Math.PI*2); ctx.fill();
     ctx.restore();
   }
 }
 
 // ══════════════════════════════════════════════
-//  PIPE CLASS
+//  GA STATE
 // ══════════════════════════════════════════════
-class Pipe {
-  constructor(x, centered) {
-    this.x = x;
-    if (centered) {
-      // First pipe: gap centered on screen for fairness
-      this.gapTop = (CANVAS_H - PIPE_GAP) / 2;
-    } else {
-      this.gapTop = 60 + Math.random() * (CANVAS_H - PIPE_GAP - 160);
-    }
-    this.passed = false;
-  }
+const POP = 80;
+const ELITE = 6;
+const MUT_RATE = 0.15;
+const MUT_STR = 0.4;
 
-  update() { this.x -= PIPE_SPEED; }
-
-  draw(ctx) {
-    // Top pipe
-    const grad1 = ctx.createLinearGradient(this.x, 0, this.x + PIPE_W, 0);
-    grad1.addColorStop(0, '#2ecc71');
-    grad1.addColorStop(0.5, '#27ae60');
-    grad1.addColorStop(1, '#1e8449');
-    ctx.fillStyle = grad1;
-    ctx.fillRect(this.x, 0, PIPE_W, this.gapTop);
-
-    // Top pipe cap
-    ctx.fillStyle = '#1e8449';
-    ctx.fillRect(this.x - 4, this.gapTop - 20, PIPE_W + 8, 20);
-
-    // Bottom pipe
-    const gapBottom = this.gapTop + PIPE_GAP;
-    ctx.fillStyle = grad1;
-    ctx.fillRect(this.x, gapBottom, PIPE_W, CANVAS_H - gapBottom);
-
-    // Bottom pipe cap
-    ctx.fillStyle = '#1e8449';
-    ctx.fillRect(this.x - 4, gapBottom, PIPE_W + 8, 20);
-
-    // Highlights
-    ctx.fillStyle = 'rgba(255,255,255,0.1)';
-    ctx.fillRect(this.x + 4, 0, 8, this.gapTop - 20);
-    ctx.fillRect(this.x + 4, gapBottom + 20, 8, CANVAS_H - gapBottom - 20);
-  }
-}
-
-// ══════════════════════════════════════════════
-//  GENETIC ALGORITHM
-// ══════════════════════════════════════════════
-const POP_SIZE = 80;
-const MUTATION_RATE = 0.15;
-const MUTATION_STRENGTH = 0.4;
-const ELITISM = 6;
-
-let birds = [];
-let pipes = [];
-let frameCount = 0;
-let generation = 0;
-let bestFitness = 0;
-let bestScore = 0;
-let bestBrain = null;
-let fitnessHistory = [];
-let training = false;
-let speedMultiplier = 1;
-let speedOptions = [1, 2, 5, 10, 50];
-let speedIdx = 0;
-let currentMutationRate = MUTATION_RATE;
+let birds = [], pipes = [], frameCount = 0;
+let gen = 0, bestFit = 0, bestScore = 0, bestBrain = null;
+let fitHistory = [], training = false, speed = 1;
+let speeds = [1, 2, 5, 10, 50], speedIdx = 0;
+let curMutRate = MUT_RATE;
 
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
-const graphCanvas = document.getElementById('fitnessGraph');
-const gCtx = graphCanvas.getContext('2d');
+const gCanvas = document.getElementById('fitnessGraph');
+const gCtx = gCanvas.getContext('2d');
 
+// ══════════════════════════════════════════════
+//  GA FUNCTIONS
+// ══════════════════════════════════════════════
 function init() {
   birds = [];
-  for (let i = 0; i < POP_SIZE; i++) {
-    birds.push(new Bird());
-  }
+  for (let i = 0; i < POP; i++) birds.push(new Bird());
   pipes = [];
   frameCount = 0;
-  generation = 0;
-  bestFitness = 0;
-  bestScore = 0;
-  bestBrain = null;
-  fitnessHistory = [];
-  log('Initialized population of ' + POP_SIZE, 'info');
+  gen = 0; bestFit = 0; bestScore = 0; bestBrain = null;
+  fitHistory = [];
+  curMutRate = MUT_RATE;
+  log('Ready! Press ▶ Start', 'info');
 }
 
 function nextGeneration() {
-  generation++;
-
-  // Finalize fitness for alive birds
-  for (let b of birds) {
-    if (b.alive) {
-      b.fitness = Math.max(b.fitness, 1);
-    }
-  }
-
-  // Sort by fitness descending
+  gen++;
+  for (let b of birds) if (b.alive) b.fitness = Math.max(b.fitness, 1);
   birds.sort((a, b) => b.fitness - a.fitness);
 
-  const genBest = birds[0];
-  const avgFit = birds.reduce((s, b) => s + b.fitness, 0) / birds.length;
+  const gb = birds[0];
+  const avg = birds.reduce((s, b) => s + b.fitness, 0) / birds.length;
 
-  if (genBest.fitness > bestFitness) {
-    bestFitness = genBest.fitness;
-    bestBrain = genBest.brain.clone();
-    log(`Gen ${generation}: New best fitness = ${bestFitness.toFixed(1)} (score: ${genBest.score})`, 'good');
+  if (gb.fitness > bestFit) {
+    bestFit = gb.fitness;
+    bestBrain = gb.brain.clone();
+    log(`Gen ${gen}: best=${bestFit.toFixed(0)} score=${gb.score}`, 'good');
   }
-  if (genBest.score > bestScore) {
-    bestScore = genBest.score;
-  }
+  if (gb.score > bestScore) bestScore = gb.score;
 
-  fitnessHistory.push({ gen: generation, best: genBest.fitness, avg: avgFit });
-  if (fitnessHistory.length > 200) fitnessHistory.shift();
+  fitHistory.push({ gen: gen, best: gb.fitness, avg: avg });
+  if (fitHistory.length > 200) fitHistory.shift();
 
-  // ═══ ADAPTIVE MUTATION ═══
-  if (generation > 3 && fitnessHistory.length > 3) {
-    const recent = fitnessHistory.slice(-3);
-    const improving = recent[recent.length - 1].best > recent[0].best + 1;
-    if (improving) {
-      currentMutationRate = Math.max(0.05, currentMutationRate * 0.9);
+  // Adaptive mutation
+  if (gen > 3) {
+    const r = fitHistory.slice(-3);
+    if (r[2].best > r[0].best + 1) {
+      curMutRate = Math.max(0.05, curMutRate * 0.9);
     } else {
-      currentMutationRate = Math.min(0.4, currentMutationRate * 1.2);
-      if (currentMutationRate > 0.3) {
-        log('High mutation — exploring...', 'info');
-      }
+      curMutRate = Math.min(0.4, curMutRate * 1.3);
     }
   }
 
-  // ═══ SELECTION: Rank-based + Elitism ═══
+  // Create new population
   const newBirds = [];
+  // Elitism
+  for (let i = 0; i < ELITE; i++) newBirds.push(new Bird(birds[i].brain.clone()));
 
-  // Elitism: keep top N unchanged
-  for (let i = 0; i < ELITISM && i < birds.length; i++) {
-    newBirds.push(new Bird(birds[i].brain.clone()));
-  }
-
-  // Fill rest using rank-weighted selection + crossover + mutation
-  // Rank selection: probability proportional to rank, not fitness
-  // This prevents one super-bird from dominating too early
-  const ranks = birds.map((_, i) => birds.length - i);
-  const totalRank = ranks.reduce((a, b) => a + b, 0);
-
-  function rankSelect() {
-    let r = Math.random() * totalRank;
-    for (let i = 0; i < birds.length; i++) {
-      r -= ranks[i];
-      if (r <= 0) return birds[i];
-    }
+  // Rank selection
+  const ranks = birds.map((_, i) => POP - i);
+  const totalR = ranks.reduce((a, b) => a + b, 0);
+  function pick() {
+    let r = Math.random() * totalR;
+    for (let i = 0; i < POP; i++) { r -= ranks[i]; if (r <= 0) return birds[i]; }
     return birds[0];
   }
 
-  while (newBirds.length < POP_SIZE) {
-    const parentA = rankSelect();
-    const parentB = rankSelect();
-    // Ensure parents are different
-    let attempts = 0;
-    while (parentB === parentA && attempts < 10) {
-      parentB = rankSelect();
-      attempts++;
-    }
-    const childBrain = NeuralNetwork.crossover(parentA.brain, parentB.brain);
-    childBrain.mutate(currentMutationRate, MUTATION_STRENGTH);
-    newBirds.push(new Bird(childBrain));
+  while (newBirds.length < POP) {
+    const a = pick();
+    let b = pick();
+    let t = 0;
+    while (b === a && t++ < 10) b = pick();
+    const child = NeuralNetwork.crossover(a.brain, b.brain);
+    child.mutate(curMutRate, MUT_STR);
+    newBirds.push(new Bird(child));
   }
 
   birds = newBirds;
   pipes = [];
   frameCount = 0;
-
   updateStats();
-  drawFitnessGraph();
+  drawGraph();
   updateBrainInfo();
 }
 
@@ -528,44 +417,34 @@ function nextGeneration() {
 //  GAME LOOP
 // ══════════════════════════════════════════════
 function gameLoop() {
-  // Always render, even when not training
-  const sky = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
-  sky.addColorStop(0, '#4dc9f6');
-  sky.addColorStop(1, '#87ceeb');
-  ctx.fillStyle = sky;
-  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-
-  // Ground
-  ctx.fillStyle = '#8B4513';
-  ctx.fillRect(0, CANVAS_H - 30, CANVAS_W, 30);
-  ctx.fillStyle = '#228B22';
-  ctx.fillRect(0, CANVAS_H - 35, CANVAS_W, 10);
+  // Background
+  const sky = ctx.createLinearGradient(0, 0, 0, CH);
+  sky.addColorStop(0, '#4dc9f6'); sky.addColorStop(1, '#87ceeb');
+  ctx.fillStyle = sky; ctx.fillRect(0, 0, CW, CH);
+  ctx.fillStyle = '#8B4513'; ctx.fillRect(0, GROUND_Y, CW, 30);
+  ctx.fillStyle = '#228B22'; ctx.fillRect(0, GROUND_Y - 5, CW, 8);
 
   if (!training) {
-    // Draw idle birds
-    for (let bird of birds) {
-      ctx.globalAlpha = 0.7;
-      bird.draw(ctx);
-      ctx.globalAlpha = 1;
-    }
-    // HUD
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fillRect(0, 0, CANVAS_W, 28);
-    ctx.fillStyle = '#fff';
-    ctx.font = '12px monospace';
-    ctx.fillText(`Press ▶ Start to begin training! | Pop: ${POP_SIZE}`, 8, 18);
+    for (let b of birds) { ctx.globalAlpha = 0.6; b.draw(ctx); ctx.globalAlpha = 1; }
+    ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(0, 0, CW, 28);
+    ctx.fillStyle = '#fff'; ctx.font = '12px monospace';
+    ctx.fillText('Press ▶ Start | Pop: ' + POP, 8, 18);
     updateStats();
     requestAnimationFrame(gameLoop);
     return;
   }
 
-  for (let s = 0; s < speedMultiplier; s++) {
-    // Spawn pipes — first pipe sooner, then regular interval
+  // Simulate
+  for (let s = 0; s < speed; s++) {
     frameCount++;
-    if (frameCount === PIPE_FIRST_SPAWN) {
-      pipes.push(new Pipe(CANVAS_W * 0.4, true)); // first pipe close, centered gap
-    } else if (frameCount > PIPE_FIRST_SPAWN && (frameCount - PIPE_FIRST_SPAWN) % PIPE_SPAWN_INTERVAL === 0) {
-      pipes.push(new Pipe(CANVAS_W + 10, false));
+
+    // Spawn pipes
+    if (frameCount === 1) {
+      // First pipe: close, centered
+      pipes.push(new Pipe(CW * 0.5, CH * 0.4 + Math.random() * CH * 0.2));
+    } else if ((frameCount - 1) % PIPE_INTERVAL === 0) {
+      const gapY = 80 + Math.random() * (CH - PIPE_GAP - 160);
+      pipes.push(new Pipe(CW + 10, gapY));
     }
 
     // Update pipes
@@ -573,68 +452,57 @@ function gameLoop() {
     pipes = pipes.filter(p => p.x + PIPE_W > -10);
 
     // Update birds
-    let aliveCount = 0;
-    for (let bird of birds) {
-      if (bird.alive) {
-        bird.think(pipes);
-        bird.update(pipes);
-        if (bird.alive) aliveCount++;
+    let alive = 0;
+    for (let b of birds) {
+      if (b.alive) {
+        b.think(pipes);
+        b.update(pipes);
+        if (b.alive) alive++;
       }
     }
 
-    // Check if all dead
-    if (aliveCount === 0) {
+    if (alive === 0) {
       nextGeneration();
     }
   }
 
-  // ═══ RENDER ═══
-  // Draw pipes
+  // Render
   for (let p of pipes) p.draw(ctx);
+  for (let b of birds) b.draw(ctx);
 
-  // Draw birds (only draw alive ones, or all with transparency)
-  for (let bird of birds) {
-    if (bird.alive) {
-      ctx.globalAlpha = 0.7;
-      bird.draw(ctx);
-      ctx.globalAlpha = 1;
-    }
-  }
-
-  // Highlight best alive bird
-  let bestAlive = birds.find(b => b.alive);
-  if (bestAlive) {
-    ctx.strokeStyle = '#ffd700';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(BIRD_X - 2, bestAlive.y - 2, BIRD_SIZE + 4, BIRD_SIZE + 4);
+  // Highlight best alive
+  const best = birds.find(b => b.alive);
+  if (best) {
+    ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 2;
+    ctx.strokeRect(BIRD_X - 2, best.y - 2, BIRD_R*2 + 4, BIRD_R*2 + 4);
   }
 
   // HUD
-  ctx.fillStyle = 'rgba(0,0,0,0.5)';
-  ctx.fillRect(0, 0, CANVAS_W, 28);
-  ctx.fillStyle = '#fff';
-  ctx.font = '12px monospace';
-  ctx.fillText(`Gen: ${generation} | Alive: ${birds.filter(b => b.alive).length}/${POP_SIZE} | Best: ${bestScore}`, 8, 18);
+  ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(0, 0, CW, 28);
+  ctx.fillStyle = '#fff'; ctx.font = '12px monospace';
+  const alive = birds.filter(b => b.alive).length;
+  ctx.fillText(`Gen: ${gen} | Alive: ${alive}/${POP} | Best: ${bestScore}`, 8, 18);
 
   updateStats();
   requestAnimationFrame(gameLoop);
 }
 
 // ══════════════════════════════════════════════
-//  UI FUNCTIONS
+//  UI
 // ══════════════════════════════════════════════
 function toggleTraining() {
   training = !training;
-  document.getElementById('btnStart').textContent = training ? '⏸ Pause' : '▶ Start';
-  document.getElementById('btnStart').classList.toggle('active', training);
+  const btn = document.getElementById('btnStart');
+  btn.textContent = training ? '⏸ Pause' : '▶ Start';
+  btn.classList.toggle('active', training);
   if (birds.length === 0) init();
 }
 
 function cycleSpeed() {
-  speedIdx = (speedIdx + 1) % speedOptions.length;
-  speedMultiplier = speedOptions[speedIdx];
-  document.getElementById('btnSpeed').textContent = `Speed: ${speedMultiplier}x`;
-  document.getElementById('speedDisp').textContent = `${speedMultiplier}x`;
+  speedIdx = (speedIdx + 1) % speeds.length;
+  speed = speeds[speedIdx];
+  document.getElementById('btnSpeed').textContent = 'Speed: ' + speed + 'x';
+  document.getElementById('speedDisp').textContent = speed + 'x';
 }
 
 function resetTraining() {
@@ -642,185 +510,121 @@ function resetTraining() {
   document.getElementById('btnStart').textContent = '▶ Start';
   document.getElementById('btnStart').classList.remove('active');
   init();
-  log('Training reset!', 'info');
 }
 
 function updateStats() {
-  document.getElementById('gen').textContent = generation;
+  document.getElementById('gen').textContent = gen;
   document.getElementById('alive').textContent = birds.filter(b => b.alive).length;
-  document.getElementById('pop').textContent = POP_SIZE;
-  document.getElementById('bestFit').textContent = bestFitness.toFixed(1);
+  document.getElementById('pop').textContent = POP;
+  document.getElementById('bestFit').textContent = bestFit.toFixed(0);
   document.getElementById('bestScore').textContent = bestScore;
   const avg = birds.length ? birds.reduce((s, b) => s + b.fitness, 0) / birds.length : 0;
-  document.getElementById('avgFit').textContent = avg.toFixed(1);
-  document.getElementById('mutRate').textContent = (currentMutationRate * 100).toFixed(0) + '%';
+  document.getElementById('avgFit').textContent = avg.toFixed(0);
+  document.getElementById('mutRate').textContent = (curMutRate * 100).toFixed(0) + '%';
 }
 
-function drawFitnessGraph() {
-  const w = 280, h = 100;
-  gCtx.fillStyle = '#16213e';
-  gCtx.fillRect(0, 0, w, h);
+function drawGraph() {
+  gCtx.fillStyle = '#16213e'; gCtx.fillRect(0, 0, 280, 100);
+  if (fitHistory.length < 2) return;
+  const maxF = Math.max(...fitHistory.map(f => f.best), 1);
+  const minF = Math.min(...fitHistory.map(f => f.avg), 0);
+  const range = maxF - minF || 1;
+  const toX = i => (i / (fitHistory.length - 1)) * 280;
+  const toY = v => 100 - ((v - minF) / range) * 90 - 5;
 
-  if (fitnessHistory.length < 2) return;
-
-  const maxFit = Math.max(...fitnessHistory.map(f => f.best), 1);
-  const minFit = Math.min(...fitnessHistory.map(f => f.avg), 0);
-  const range = maxFit - minFit || 1;
-
-  const toX = i => (i / (fitnessHistory.length - 1)) * w;
-  const toY = v => h - ((v - minFit) / range) * (h - 10) - 5;
-
-  // Grid lines
-  gCtx.strokeStyle = '#333';
-  gCtx.lineWidth = 0.5;
-  for (let i = 0; i < 5; i++) {
-    const y = (i / 4) * (h - 10) + 5;
-    gCtx.beginPath();
-    gCtx.moveTo(0, y);
-    gCtx.lineTo(w, y);
-    gCtx.stroke();
-  }
-
-  // Best fitness line
-  gCtx.strokeStyle = '#7fff7f';
-  gCtx.lineWidth = 1.5;
-  gCtx.beginPath();
-  for (let i = 0; i < fitnessHistory.length; i++) {
-    const x = toX(i), y = toY(fitnessHistory[i].best);
+  gCtx.strokeStyle = '#7fff7f'; gCtx.lineWidth = 1.5; gCtx.beginPath();
+  for (let i = 0; i < fitHistory.length; i++) {
+    const x = toX(i), y = toY(fitHistory[i].best);
     i === 0 ? gCtx.moveTo(x, y) : gCtx.lineTo(x, y);
   }
   gCtx.stroke();
 
-  // Average fitness line
-  gCtx.strokeStyle = '#7fbfff';
-  gCtx.lineWidth = 1;
-  gCtx.beginPath();
-  for (let i = 0; i < fitnessHistory.length; i++) {
-    const x = toX(i), y = toY(fitnessHistory[i].avg);
+  gCtx.strokeStyle = '#7fbfff'; gCtx.lineWidth = 1; gCtx.beginPath();
+  for (let i = 0; i < fitHistory.length; i++) {
+    const x = toX(i), y = toY(fitHistory[i].avg);
     i === 0 ? gCtx.moveTo(x, y) : gCtx.lineTo(x, y);
   }
   gCtx.stroke();
 
-  // Legend
-  gCtx.fillStyle = '#7fff7f';
-  gCtx.fillRect(4, 4, 8, 3);
-  gCtx.fillStyle = '#aaa';
-  gCtx.font = '9px monospace';
-  gCtx.fillText('best', 16, 8);
-  gCtx.fillStyle = '#7fbfff';
-  gCtx.fillRect(50, 4, 8, 3);
-  gCtx.fillStyle = '#aaa';
-  gCtx.fillText('avg', 62, 8);
+  gCtx.fillStyle = '#7fff7f'; gCtx.fillRect(4, 4, 8, 3);
+  gCtx.fillStyle = '#aaa'; gCtx.font = '9px monospace'; gCtx.fillText('best', 16, 8);
+  gCtx.fillStyle = '#7fbfff'; gCtx.fillRect(50, 4, 8, 3);
+  gCtx.fillStyle = '#aaa'; gCtx.fillText('avg', 62, 8);
 }
 
 function updateBrainInfo() {
   if (!bestBrain) return;
-  const data = bestBrain.serialize();
-  const info = document.getElementById('brainInfo');
-  const preview = data.slice(0, 20).map(v => v.toFixed(3)).join(', ');
-  info.innerHTML = `<pre>Inputs: ${bestBrain.inputSize} | Hidden: ${bestBrain.hiddenSize} | Output: ${bestBrain.outputSize}
-Weights: ${data.length} total
-First 20: [${preview}...]</pre>`;
+  const d = bestBrain.serialize();
+  const p = d.slice(0, 15).map(v => v.toFixed(2)).join(', ');
+  document.getElementById('brainInfo').innerHTML =
+    `<pre>Net: 5→8→1 | Weights: ${d.length}\nBest 15: [${p}...]</pre>`;
 }
 
-function log(msg, type = '') {
+function log(msg, type) {
   const el = document.getElementById('log');
-  const div = document.createElement('div');
-  div.className = type;
-  div.textContent = `[Gen ${generation}] ${msg}`;
-  el.appendChild(div);
+  const d = document.createElement('div');
+  d.className = type || '';
+  d.textContent = '[G' + gen + '] ' + msg;
+  el.appendChild(d);
   el.scrollTop = el.scrollHeight;
-  // Keep last 50 entries
   while (el.children.length > 50) el.removeChild(el.firstChild);
 }
 
-// ═══ SAVE / LOAD BRAIN ═══
+// ═══ SAVE / LOAD ═══
 function saveBestBrain() {
-  if (!bestBrain) {
-    log('No best brain yet! Train first.', 'bad');
-    return;
-  }
+  if (!bestBrain) { log('No brain yet!', 'bad'); return; }
   const data = {
-    version: 1,
-    type: 'flappy_ga_brain',
-    inputSize: bestBrain.inputSize,
-    hiddenSize: bestBrain.hiddenSize,
-    outputSize: bestBrain.outputSize,
+    version: 1, type: 'flappy_ga_brain',
+    inputSize: 5, hiddenSize: 8, outputSize: 1,
     weights: bestBrain.serialize(),
-    generation: generation,
-    bestFitness: bestFitness,
-    bestScore: bestScore,
+    generation: gen, bestFitness: bestFit, bestScore: bestScore,
     savedAt: new Date().toISOString()
   };
   const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url;
-  a.download = `flappy_brain_gen${generation}_score${bestScore}.json`;
-  a.click();
+  a.href = url; a.download = 'flappy_brain_g' + gen + '_s' + bestScore + '.json'; a.click();
   URL.revokeObjectURL(url);
-  log(`Saved brain! Gen ${generation}, Score ${bestScore}`, 'good');
+  log('Saved! Gen ' + gen + ', Score ' + bestScore, 'good');
 }
 
-function loadBrainPrompt() {
-  document.getElementById('fileInput').click();
-}
+function loadBrainPrompt() { document.getElementById('fileInput').click(); }
 
-function handleFileLoad(event) {
-  const file = event.target.files[0];
+function handleFileLoad(e) {
+  const file = e.target.files[0];
   if (!file) return;
   const reader = new FileReader();
-  reader.onload = function(e) {
+  reader.onload = function(ev) {
     try {
-      const data = JSON.parse(e.target.result);
-      if (data.type !== 'flappy_ga_brain') {
-        log('Invalid brain file!', 'bad');
-        return;
-      }
-      bestBrain = NeuralNetwork.deserialize(data.weights, data.inputSize, data.hiddenSize, data.outputSize);
-      log(`Loaded brain from Gen ${data.generation}, Score ${data.bestScore}`, 'good');
-
-      // Apply to all birds (with some mutation for diversity)
+      const data = JSON.parse(ev.target.result);
+      if (data.type !== 'flappy_ga_brain') { log('Invalid file!', 'bad'); return; }
+      bestBrain = NeuralNetwork.deserialize(data.weights, 5, 8, 1);
+      log('Loaded brain G' + data.generation + ' score=' + data.bestScore, 'good');
       for (let i = 0; i < birds.length; i++) {
-        if (i < ELITISM) {
-          birds[i].brain = bestBrain.clone();
-        } else {
-          birds[i].brain = bestBrain.clone().mutate(MUTATION_RATE);
-        }
+        birds[i].brain = i < ELITE ? bestBrain.clone() : bestBrain.clone().mutate(curMutRate, MUT_STR);
       }
       updateBrainInfo();
-    } catch (err) {
-      log('Error loading brain: ' + err.message, 'bad');
-    }
+    } catch (err) { log('Error: ' + err.message, 'bad'); }
   };
   reader.readAsText(file);
-  event.target.value = '';
+  e.target.value = '';
 }
 
 function exportBrainJSON() {
-  if (!bestBrain) {
-    log('No brain to export!', 'bad');
-    return;
-  }
+  if (!bestBrain) { log('No brain!', 'bad'); return; }
   const data = {
-    version: 1,
-    type: 'flappy_ga_brain',
-    inputSize: bestBrain.inputSize,
-    hiddenSize: bestBrain.hiddenSize,
-    outputSize: bestBrain.outputSize,
+    version: 1, type: 'flappy_ga_brain',
+    inputSize: 5, hiddenSize: 8, outputSize: 1,
     weights: bestBrain.serialize(),
-    generation: generation,
-    bestFitness: bestFitness,
-    bestScore: bestScore
+    generation: gen, bestFitness: bestFit, bestScore: bestScore
   };
   navigator.clipboard.writeText(JSON.stringify(data)).then(() => {
-    log('Brain JSON copied to clipboard!', 'good');
+    log('Copied to clipboard!', 'good');
   });
 }
 
 // ═══ START ═══
 init();
-log('Press ▶ Start to begin training!', 'info');
 gameLoop();
 </script>
 </body>
