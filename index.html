@@ -460,7 +460,7 @@ function nextGeneration() {
 
   // Elitism: keep top N unchanged
   for (let i = 0; i < ELITISM; i++) {
-    const elite = new Birds[i] = new Bird(birds[i].brain.clone());
+    const elite = new Bird(birds[i].brain.clone());
     newBirds.push(elite);
   }
 
@@ -505,7 +505,33 @@ function tournamentSelect(k = 5) {
 //  GAME LOOP
 // ══════════════════════════════════════════════
 function gameLoop() {
+  // Always render, even when not training
+  const sky = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
+  sky.addColorStop(0, '#4dc9f6');
+  sky.addColorStop(1, '#87ceeb');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+  // Ground
+  ctx.fillStyle = '#8B4513';
+  ctx.fillRect(0, CANVAS_H - 30, CANVAS_W, 30);
+  ctx.fillStyle = '#228B22';
+  ctx.fillRect(0, CANVAS_H - 35, CANVAS_W, 10);
+
   if (!training) {
+    // Draw idle birds
+    for (let bird of birds) {
+      ctx.globalAlpha = 0.7;
+      bird.draw(ctx);
+      ctx.globalAlpha = 1;
+    }
+    // HUD
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(0, 0, CANVAS_W, 28);
+    ctx.fillStyle = '#fff';
+    ctx.font = '12px monospace';
+    ctx.fillText(`Press ▶ Start to begin training! | Pop: ${POP_SIZE}`, 8, 18);
+    updateStats();
     requestAnimationFrame(gameLoop);
     return;
   }
@@ -538,19 +564,6 @@ function gameLoop() {
   }
 
   // ═══ RENDER ═══
-  // Sky gradient
-  const sky = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
-  sky.addColorStop(0, '#4dc9f6');
-  sky.addColorStop(1, '#87ceeb');
-  ctx.fillStyle = sky;
-  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-
-  // Ground
-  ctx.fillStyle = '#8B4513';
-  ctx.fillRect(0, CANVAS_H - 30, CANVAS_W, 30);
-  ctx.fillStyle = '#228B22';
-  ctx.fillRect(0, CANVAS_H - 35, CANVAS_W, 10);
-
   // Draw pipes
   for (let p of pipes) p.draw(ctx);
 
